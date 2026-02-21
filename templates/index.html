@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Score Processor</title>
+    <style>
+        body { font-family: sans-serif; background: #f4f4f9; padding: 20px; color: #333; }
+        .container { max-width: 600px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .flash-message { background: #d1ecf1; color: #0c5460; padding: 10px; border-radius: 4px; margin-bottom: 20px; }
+        h2 { border-bottom: 2px solid #2c3e50; padding-bottom: 5px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"], select, input[type="file"] { width: 100%; padding: 8px; box-sizing: border-box; }
+        button { background: #3498db; color: white; border: none; padding: 10px 15px; font-size: 16px; cursor: pointer; width: 100%; border-radius: 4px; }
+        button:hover { background: #2980b9; }
+
+        /* ローディングアニメーション用のCSS */
+        .loader {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 10px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #loading-overlay {
+            display: none; /* 初期状態では隠しておく */
+            text-align: center;
+            padding: 15px;
+            background: #e9ecef;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Score Processor</h1>
+        
+        {% with messages = get_flashed_messages() %}
+          {% if messages %}
+            <div class="flash-message">
+              {% for message in messages %}
+                <p style="margin:0;">{{ message }}</p>
+              {% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
+
+        <h2>1. 画像の処理と登録</h2>
+        <form action="{{ url_for('process_files') }}" method="POST" enctype="multipart/form-data" onsubmit="showLoading()">
+            <div class="form-group">
+                <label for="files">画像ファイルを選択 (複数可):</label>
+                <input type="file" id="files" name="files" accept="image/*" multiple required>
+            </div>
+            
+            <button type="submit" id="btn-process">処理してプレビューを確認</button>
+            
+            <div id="loading-overlay">
+                <div class="loader"></div>
+                <p style="margin: 5px 0 0 0; font-weight: bold; color: #2c3e50;">画像処理中... 画面が変わるまでお待ちください</p>
+            </div>
+        </form>
+
+        <br><br>
+
+        <h2>2. 楽譜の検索と印刷</h2>
+        <form action="{{ url_for('print_score') }}" method="POST">
+            <div class="form-group">
+                <label for="print_piece">楽曲名 (Piece):</label>
+                <input type="text" id="print_piece" name="piece" required>
+            </div>
+            <div class="form-group">
+                <label for="print_inst">楽器名 (Instrument):</label>
+                <input type="text" id="print_inst" name="instrument" required>
+            </div>
+            <div class="form-group">
+                <label for="mode">印刷モード:</label>
+                <select id="mode" name="mode">
+                    <option value="booklet">小冊子 (Booklet)</option>
+                    <option value="2in1">2 in 1 (A3)</option>
+                    <option value="1in1">1 in 1 (A4)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="printer">プリンタ名 (空欄でシステムのデフォルトを使用):</label>
+                <input type="text" id="printer" name="printer">
+            </div>
+            <button type="submit" style="background: #e67e22;">印刷を実行</button>
+        </form>
+    </div>
+
+    <script>
+        function showLoading() {
+            // 送信ボタンを隠し、ローディングアニメーションを表示する
+            document.getElementById('btn-process').style.display = 'none';
+            document.getElementById('loading-overlay').style.display = 'block';
+        }
+    </script>
+</body>
+</html>
