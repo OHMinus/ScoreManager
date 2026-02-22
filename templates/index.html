@@ -8,34 +8,18 @@
         body { font-family: sans-serif; background: #f4f4f9; padding: 20px; color: #333; }
         .container { max-width: 600px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
         .flash-message { background: #d1ecf1; color: #0c5460; padding: 10px; border-radius: 4px; margin-bottom: 20px; }
-        h2 { border-bottom: 2px solid #2c3e50; padding-bottom: 5px; }
+        h2 { border-bottom: 2px solid #2c3e50; padding-bottom: 5px; margin-top: 30px; }
         .form-group { margin-bottom: 15px; }
         label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input[type="text"], select, input[type="file"] { width: 100%; padding: 8px; box-sizing: border-box; }
-        button { background: #3498db; color: white; border: none; padding: 10px 15px; font-size: 16px; cursor: pointer; width: 100%; border-radius: 4px; }
-        button:hover { background: #2980b9; }
-
-        /* ローディングアニメーション用のCSS */
-        .loader {
-            border: 5px solid #f3f3f3;
-            border-top: 5px solid #3498db;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 10px auto;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        #loading-overlay {
-            display: none; /* 初期状態では隠しておく */
-            text-align: center;
-            padding: 15px;
-            background: #e9ecef;
-            border-radius: 4px;
-        }
+        input[type="text"], input[type="number"], input[type="file"] { width: 100%; padding: 10px; box-sizing: border-box; }
+        button, .btn-link { display: inline-block; background: #3498db; color: white; border: none; padding: 12px 15px; font-size: 16px; cursor: pointer; width: 100%; border-radius: 4px; text-align: center; text-decoration: none; box-sizing: border-box; }
+        button:hover, .btn-link:hover { background: #2980b9; }
+        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 10px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #loading-overlay { display: none; text-align: center; padding: 15px; background: #e9ecef; border-radius: 4px; margin-top: 15px;}
+        .flex-row { display: flex; gap: 10px; }
+        .flex-row .form-group { flex: 1; }
+        .action-box { background: #fafafa; border: 1px solid #ddd; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
     </style>
 </head>
 <body>
@@ -53,52 +37,57 @@
         {% endwith %}
 
         <h2>1. 画像の処理と登録</h2>
-        <form action="{{ url_for('process_files') }}" method="POST" enctype="multipart/form-data" onsubmit="showLoading()">
-            <div class="form-group">
-                <label for="files">画像ファイルを選択 (複数可):</label>
-                <input type="file" id="files" name="files" accept="image/*" multiple required>
+        <form method="POST" enctype="multipart/form-data" onsubmit="showLoading()">
+            <div class="flex-row">
+                <div class="form-group" style="flex: 0.3;">
+                    <label for="year">年度:</label>
+                    <input type="number" id="year" name="year" value="{{ current_year }}" required>
+                </div>
+                <div class="form-group">
+                    <label for="event_name">演奏会名:</label>
+                    <input type="text" id="event_name" name="event_name" list="event-list" placeholder="例: 定期演奏会" required autocomplete="off">
+                    <datalist id="event-list">
+                        {% for name in event_names %}
+                            <option value="{{ name }}"></option>
+                        {% endfor %}
+                    </datalist>
+                </div>
             </div>
             
-            <button type="submit" id="btn-process">処理してプレビューを確認</button>
-            
+            <div class="action-box">
+                <label for="files">【方法A】画像ファイルから登録:</label>
+                <input type="file" id="files" name="files" accept="image/*" multiple style="margin-bottom: 10px;">
+                <button type="submit" formaction="{{ url_for('process_files') }}" id="btn-process">ファイルを選択してプレビュー</button>
+            </div>
+
+            <div class="action-box">
+                <label for="device_name">【方法B】スキャナーから直接登録:</label>
+                <input type="text" id="device_name" name="device_name" placeholder="デバイス名 (空欄でシステムデフォルトを使用)" style="margin-bottom: 10px;">
+                <button type="submit" formaction="{{ url_for('scan_files') }}" id="btn-scan" style="background: #27ae60;">スキャナーを起動してプレビュー</button>
+            </div>
+
             <div id="loading-overlay">
                 <div class="loader"></div>
-                <p style="margin: 5px 0 0 0; font-weight: bold; color: #2c3e50;">画像処理中... 画面が変わるまでお待ちください</p>
+                <p style="margin: 5px 0 0 0; font-weight: bold; color: #2c3e50;">画像を取得・処理中... 画面が変わるまでお待ちください</p>
             </div>
         </form>
 
-        <br><br>
-
-        <h2>2. 楽譜の検索と印刷</h2>
-        <form action="{{ url_for('print_score') }}" method="POST">
+        <h2>2. 楽譜の検索と閲覧</h2>
+        <form action="{{ url_for('search_score') }}" method="GET">
             <div class="form-group">
-                <label for="print_piece">楽曲名 (Piece):</label>
-                <input type="text" id="print_piece" name="piece" required>
+                <input type="text" id="keyword" name="keyword" required placeholder="行事 または 曲名を入力 (例: 2026定期, Alvamar)">
             </div>
-            <div class="form-group">
-                <label for="print_inst">楽器名 (Instrument):</label>
-                <input type="text" id="print_inst" name="instrument" required>
-            </div>
-            <div class="form-group">
-                <label for="mode">印刷モード:</label>
-                <select id="mode" name="mode">
-                    <option value="booklet">小冊子 (Booklet)</option>
-                    <option value="2in1">2 in 1 (A3)</option>
-                    <option value="1in1">1 in 1 (A4)</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="printer">プリンタ名 (空欄でシステムのデフォルトを使用):</label>
-                <input type="text" id="printer" name="printer">
-            </div>
-            <button type="submit" style="background: #e67e22;">印刷を実行</button>
+            <button type="submit" style="background: #2c3e50; margin-bottom: 15px;">DBから検索</button>
         </form>
+        
+        <a href="{{ url_for('score_list') }}" class="btn-link" style="background: #e67e22;">📑 登録されているすべての楽譜一覧を見る</a>
     </div>
 
     <script>
         function showLoading() {
-            // 送信ボタンを隠し、ローディングアニメーションを表示する
+            // 送信時にボタンを非表示にし、二重送信を防止
             document.getElementById('btn-process').style.display = 'none';
+            document.getElementById('btn-scan').style.display = 'none';
             document.getElementById('loading-overlay').style.display = 'block';
         }
     </script>

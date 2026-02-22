@@ -9,77 +9,23 @@
         .container { max-width: 1000px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
         .flash-message { background: #d4edda; color: #155724; padding: 10px; border-radius: 4px; margin-bottom: 15px; }
         .error { color: red; margin-bottom: 15px; font-weight: bold; }
-        
-        /* フォーム系 */
         .form-group { text-align: left; margin-bottom: 15px; }
         label { display: block; margin-bottom: 5px; font-weight: bold; }
         input[type="text"], input[type="number"] { padding: 8px; box-sizing: border-box; }
         input[type="text"] { width: 100%; }
-        
-        /* ボタン系 */
         button { background: #2ecc71; color: white; border: none; padding: 15px; font-size: 18px; cursor: pointer; width: 100%; border-radius: 4px; margin-bottom: 10px; }
         button.update { background: #f39c12; font-size: 16px; padding: 10px; margin-bottom: 10px; }
+        button.scan-add { background: #9b59b6; margin-bottom: 20px; }
         button.cancel { background: #95a5a6; margin-top: 10px; margin-bottom: 30px; }
-        
-        /* タイル表示 (CSS Grid) */
-        .preview-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 20px;
-            margin-top: 20px;
-            margin-bottom: 20px;
-        }
-        
-        .preview-item { 
-            background: #f8f9fa; 
-            border: 1px solid #ddd; 
-            border-radius: 8px; 
-            padding: 10px; 
-            text-align: center;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        }
-        
-        .order-input-wrapper {
-            margin-bottom: 10px;
-            background: #e9ecef;
-            padding: 5px;
-            border-radius: 4px;
-        }
-        
+        .preview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px; margin-top: 20px; margin-bottom: 20px; }
+        .preview-item { background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; padding: 10px; text-align: center; display: flex; flex-direction: column; justify-content: space-between; position: relative; }
+        .order-input-wrapper { margin-bottom: 10px; background: #e9ecef; padding: 5px; border-radius: 4px; }
         .order-input { width: 60px; font-size: 16px; font-weight: bold; text-align: center; }
-        
-        .preview-image { 
-            max-width: 100%; 
-            max-height: 300px; 
-            object-fit: contain; 
-            border: 1px solid #ccc; 
-            box-shadow: 1px 1px 3px rgba(0,0,0,0.1); 
-            margin: auto;
-            cursor: zoom-in; /* マウスカーソルを虫眼鏡にする */
-        }
-        
-        /* 拡大表示(モーダル)用のCSS */
-        #image-modal {
-            display: none; 
-            position: fixed; 
-            z-index: 1000; 
-            top: 0; left: 0; 
-            width: 100%; height: 100%; 
-            background-color: rgba(0,0,0,0.85); /* 半透明の黒背景 */
-            text-align: center;
-            cursor: zoom-out; /* マウスカーソルをマイナス虫眼鏡にする */
-        }
-        
-        #modal-img {
-            max-width: 95%; 
-            max-height: 95vh; 
-            margin-top: 2.5vh;
-            border: 2px solid white;
-            box-shadow: 0 0 20px rgba(0,0,0,0.5);
-        }
+        .preview-image { max-width: 100%; max-height: 300px; object-fit: contain; border: 1px solid #ccc; margin: auto; cursor: zoom-in; }
+        #image-modal { display: none; position: fixed; z-index: 1000; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.85); text-align: center; cursor: zoom-out; }
+        #modal-img { max-width: 95%; max-height: 95vh; margin-top: 2.5vh; border: 2px solid white; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 0 auto; display: inline-block; vertical-align: middle; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
@@ -95,15 +41,42 @@
             </div>
           {% endif %}
         {% endwith %}
-        
-        {% if error %}
-            <div class="error">{{ error }}</div>
-        {% endif %}
+
+        <form action="{{ url_for('scan_files') }}" method="POST" onsubmit="showLoadingScan()">
+            <input type="hidden" name="year" value="{{ year }}">
+            <input type="hidden" name="event_name" value="{{ event_name }}">
+            <input type="hidden" name="device_name" value="{{ device_name|default('') }}">
+            <input type="hidden" name="piece" id="hidden_piece_scan" value="{{ piece_guess }}">
+            <input type="hidden" name="instrument" id="hidden_inst_scan" value="{{ inst_guess }}">
+            
+            {% for filename in previews %}
+                <input type="hidden" name="existing_previews" value="{{ filename }}">
+            {% endfor %}
+            
+            <button type="submit" class="scan-add" id="btn-scan-add">🖨️ 楽譜を入れ替えて、次のページをスキャン追加する</button>
+            <div id="scan-loading" style="display:none; color:#9b59b6; font-weight:bold; margin-bottom: 20px;">
+                <div class="loader"></div> スキャナー稼働中...
+            </div>
+        </form>
+
+        <hr>
 
         <form action="{{ url_for('save_score') }}" method="POST" onsubmit="hideSaveButton()">
+            <div style="background: #eaf2f8; padding: 10px; border-radius: 4px; margin-bottom: 15px; text-align: left; font-weight: bold; color: #2c3e50;">
+                📌 登録先: {{ year }}{{ event_name }}
+            </div>
+            
+            <input type="hidden" name="year" value="{{ year }}">
+            <input type="hidden" name="event_name" value="{{ event_name }}">
+
             <div class="form-group">
-                <label for="piece">楽曲名 (Piece): <span style="font-weight:normal; font-size:0.8em; color:#666;">※自動推測されたテキスト</span></label>
-                <input type="text" id="piece" name="piece" value="{{ piece_guess }}" required>
+                <label for="piece">楽曲名 (Piece): <span style="font-weight:normal; font-size:0.8em; color:#666;">※自動推測</span></label>
+                <input type="text" id="piece" name="piece" value="{{ piece_guess }}" list="piece-list" required autocomplete="off">
+                <datalist id="piece-list">
+                    {% for name in piece_names %}
+                        <option value="{{ name }}"></option>
+                    {% endfor %}
+                </datalist>
             </div>
             <div class="form-group">
                 <label for="instrument">楽器名 (Instrument):</label>
@@ -119,35 +92,35 @@
         </form>
 
         <form action="{{ url_for('index') }}" method="GET">
-            <button type="submit" class="cancel" id="btn-cancel">キャンセルして戻る</button>
+            <button type="submit" class="cancel" id="btn-cancel">すべて破棄してトップへ戻る</button>
         </form>
 
         <hr>
-        <h3>処理結果 ({{ previews|length }} ページ)</h3>
-        <p style="font-size: 0.9em; color: #555;">※画像をクリックすると拡大表示します</p>
+        <h3>処理結果 (全 {{ previews|length }} ページ)</h3>
         
-        <form action="{{ url_for('update_order') }}" method="POST">
+        <form action="{{ url_for('update_order') }}" method="POST" onsubmit="showLoadingUpdate()">
+            <input type="hidden" name="year" value="{{ year }}">
+            <input type="hidden" name="event_name" value="{{ event_name }}">
+            <input type="hidden" name="device_name" value="{{ device_name|default('') }}">
             <input type="hidden" name="piece" id="hidden_piece" value="{{ piece_guess }}">
             <input type="hidden" name="instrument" id="hidden_inst" value="{{ inst_guess }}">
             
+            <button type="submit" class="update btn-update">🔄 数字を書き換えて順番を更新</button>
+
             <div class="preview-grid">
                 {% for filename in previews %}
                     <div class="preview-item">
                         <div class="order-input-wrapper">
-                            <label>
-                                表示順: 
-                                <input type="number" name="orders[]" class="order-input" value="{{ loop.index }}" min="1">
-                            </label>
+                            <label>表示順: <input type="number" name="orders[]" class="order-input" value="{{ loop.index }}" min="1"></label>
                             <input type="hidden" name="filenames[]" value="{{ filename }}">
                         </div>
-                        <img src="{{ url_for('static', filename='temp/previews/' ~ filename) }}" class="preview-image" alt="Preview Page {{ loop.index }}" onclick="openModal(this.src)">
+                        <img src="{{ url_for('static', filename='temp/previews/' ~ filename) }}" class="preview-image" onclick="openModal(this.src)">
                     </div>
                 {% endfor %}
             </div>
             
-            <button type="submit" class="update">🔄 数字を書き換えて順番を更新</button>
+            <button type="submit" class="update btn-update">🔄 数字を書き換えて順番を更新</button>
         </form>
-
     </div>
 
     <div id="image-modal" onclick="closeModal()">
@@ -155,33 +128,40 @@
     </div>
 
     <script>
-        // 曲名と楽器名の入力内容を順番変更フォームにも同期させる
-        document.getElementById('piece').addEventListener('input', function(e) {
-            document.getElementById('hidden_piece').value = e.target.value;
+        // 曲名と楽器名の入力内容を、追加スキャンフォームや順番更新フォームに同期
+        document.getElementById('piece').addEventListener('input', function(e) { 
+            document.getElementById('hidden_piece').value = e.target.value; 
+            document.getElementById('hidden_piece_scan').value = e.target.value; 
         });
-        document.getElementById('instrument').addEventListener('input', function(e) {
-            document.getElementById('hidden_inst').value = e.target.value;
+        document.getElementById('instrument').addEventListener('input', function(e) { 
+            document.getElementById('hidden_inst').value = e.target.value; 
+            document.getElementById('hidden_inst_scan').value = e.target.value; 
         });
 
-        // 拡大モーダルを開く関数
-        function openModal(imageSrc) {
-            document.getElementById('modal-img').src = imageSrc;
-            document.getElementById('image-modal').style.display = 'block';
+        function openModal(imageSrc) { document.getElementById('modal-img').src = imageSrc; document.getElementById('image-modal').style.display = 'block'; }
+        function closeModal() { document.getElementById('image-modal').style.display = 'none'; }
+        
+        function disableAllButtons() {
+            document.getElementById('btn-save').style.display = 'none';
+            document.getElementById('btn-cancel').style.display = 'none';
+            document.getElementById('btn-scan-add').style.display = 'none';
+            var updateBtns = document.getElementsByClassName('btn-update');
+            for(var i=0; i<updateBtns.length; i++) updateBtns[i].style.display = 'none';
         }
 
-        // 拡大モーダルを閉じる関数
-        function closeModal() {
-            document.getElementById('image-modal').style.display = 'none';
+        function showLoadingScan() {
+            disableAllButtons();
+            document.getElementById('scan-loading').style.display = 'block';
         }
 
         function hideSaveButton() {
-            document.getElementById('btn-save').style.display = 'none';
-            document.getElementById('btn-cancel').style.display = 'none';
-            var updateBtns = document.getElementsByClassName('update');
-            for(var i=0; i<updateBtns.length; i++) {
-                updateBtns[i].style.display = 'none';
-            }
+            disableAllButtons();
             document.getElementById('save-loading').style.display = 'block';
+        }
+        
+        function showLoadingUpdate() {
+            // 順番更新時も一瞬非表示にして連打を防ぐ
+            disableAllButtons();
         }
     </script>
 </body>

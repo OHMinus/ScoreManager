@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ piece }} - 楽譜詳細</title>
+    <style>
+        body { font-family: sans-serif; background: #f4f4f9; padding: 20px; color: #333; }
+        .container { max-width: 900px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .flash-message { background: #d4edda; color: #155724; padding: 10px; border-radius: 4px; margin-bottom: 20px; }
+        h1 { color: #2c3e50; margin-bottom: 5px; }
+        .event-badge { background: #e67e22; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.9em; vertical-align: middle; }
+        .inst-card { border: 1px solid #ccc; padding: 15px; border-radius: 8px; margin-bottom: 15px; background: #fafafa; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 15px; }
+        .inst-name { font-weight: bold; font-size: 1.2em; min-width: 150px; color: #34495e; }
+        .action-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 0; }
+        .action-form select, .action-form input { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        .action-form button { background: #3498db; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .btn-back { display: inline-block; background: #95a5a6; color: white; padding: 10px 15px; border-radius: 4px; text-decoration: none; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="{{ url_for('score_list') }}" class="btn-back">◀ 一覧へ戻る</a>
+
+        {% with messages = get_flashed_messages() %}
+          {% if messages %}
+            <div class="flash-message">
+              {% for message in messages %}
+                <p style="margin:0;">{{ message }}</p>
+              {% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
+
+        <h1>{{ piece }} <span class="event-badge">{{ year }}{{ event_name }}</span></h1>
+        <hr style="margin-bottom: 20px;">
+
+        {% if instruments %}
+            {% for inst in instruments %}
+                <div class="inst-card">
+                    <div class="inst-name">🎼 {{ inst.name }}</div>
+                    
+                    <form action="{{ url_for('output_action') }}" method="POST" class="action-form">
+                        <input type="hidden" name="directory" value="{{ inst.dir }}">
+                        <input type="hidden" name="year" value="{{ year }}">
+                        <input type="hidden" name="event_name" value="{{ event_name }}">
+                        <input type="hidden" name="piece" value="{{ piece }}">
+                        <input type="hidden" name="instrument" value="{{ inst.name }}">
+                        
+                        <select name="mode">
+                            <option value="booklet">小冊子 (A3)</option>
+                            <option value="2in1">2 in 1 (A3)</option>
+                            <option value="1in1">1 in 1 (A4)</option>
+                        </select>
+                        
+                        <select name="action_type">
+                            <option value="pdf">📄 PDF 保存</option>
+                            <option value="zip">📁 画像ZIP 保存</option>
+                            <option value="print">🖨️ 印刷 (CUPS)</option>
+                        </select>
+                        
+                        <input type="text" name="printer" placeholder="プリンタ指定(任意)" style="width: 140px;">
+                        <button type="submit">実行</button>
+                    </form>
+                </div>
+            {% endfor %}
+        {% else %}
+            <p>この楽曲のパートデータは見つかりませんでした。</p>
+        {% endif %}
+    </div>
+</body>
+</html>

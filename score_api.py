@@ -27,7 +27,8 @@ DEFAULT_CONFIG = {
     'black_point': 50,
     'crop_padding_mm': 2.0,
     'enable_final_closing': True,
-    'final_closing_kernel': 2
+    'final_closing_kernel': 2,
+    'booklet_direction': 'left' # 小冊子の開き方向を追加
 }
 
 
@@ -193,9 +194,6 @@ def crop_margins_and_fit(cv_img, config):
 # ==========================================
 
 def scan_score_from_epson(output_filepath, dpi=300, device_name=None):
-    """
-    Linuxの scanimage コマンドを利用してEpsonカラリオから直接スキャンを行う。
-    """
     cmd = ["scanimage"]
     if device_name:
         cmd.extend(["-d", device_name])
@@ -235,8 +233,12 @@ def process_file_to_1in1(file_path, config=DEFAULT_CONFIG):
         
     return processed_pages
 
-def save_and_register_score(processed_pages_list, piece_name, instrument, db_csv_path="scores_db.csv", base_save_dir="score_data"):
-    save_dir = os.path.join(base_save_dir, piece_name, instrument)
+# --- score_api.py の save_and_register_score 以降を以下に差し替え ---
+
+def save_and_register_score(processed_pages_list, year, event_name, piece_name, instrument, db_csv_path="scores_db.csv", base_save_dir="score_data"):
+    # 年度と演奏会名を結合したフォルダ名を作成 (例: 2026定期演奏会)
+    combined_event = f"{year}{event_name}"
+    save_dir = os.path.join(base_save_dir, combined_event, piece_name, instrument)
     os.makedirs(save_dir, exist_ok=True)
     
     for i, page in enumerate(processed_pages_list):
@@ -249,41 +251,119 @@ def save_and_register_score(processed_pages_list, piece_name, instrument, db_csv
     
     if db_exists:
         with open(db_csv_path, mode='r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if row['Piece'] == piece_name and row['Instrument'] == instrument:
+            for row in csv.DictReader(f):
+                # 互換性維持: 古いデータ('Event')がある場合はそれを EventName に回す
+                r_year = row.get('Year', '')
+                r_ev = row.get('EventName', row.get('Event', ''))
+                
+                if r_year == year and r_ev == event_name and row.get('Piece') == piece_name and row.get('Instrument') == instrument:
                     row['Directory'] = save_dir
                     updated = True
-                records.append(row)
+                
+                records.append({
+                    'Year': r_year,
+                    'EventName': r_ev,
+                    'Piece': row.get('Piece', ''),
+                    'Instrument': row.get('Instrument', ''),
+                    'Directory': row.get('Directory', '')
+                })
                 
     if not updated:
-        records.append({'Piece': piece_name, 'Instrument': instrument, 'Directory': save_dir})
+        records.append({'Year': year, 'EventName': event_name, 'Piece': piece_name, 'Instrument': instrument, 'Directory': save_dir})
         
     with open(db_csv_path, mode='w', encoding='utf-8', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['Piece', 'Instrument', 'Directory'])
+        # DBのカラム構造を刷新
+        writer = csv.DictWriter(f, fieldnames=['Year', 'EventName', 'Piece', 'Instrument', 'Directory'])
         writer.writeheader()
         writer.writerows(records)
         
     return save_dir
 
-def search_score_directory(piece_name, instrument, db_csv_path="scores_db.csv"):
-    if not os.path.exists(db_csv_path):
-        return None
-        
+def get_unique_event_names(db_csv_path="scores_db.csv"):
+    """
+    サジェスト用に、DBに存在するユニークな演奏会名のリストを取得する。
+    """
+    if not os.path.exists(db_csv_path): return []
+    events = set()
     with open(db_csv_path, mode='r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if row['Piece'] == piece_name and row['Instrument'] == instrument:
-                return row['Directory']
-    return None
+        for row in csv.DictReader(f):
+            ev = row.get('EventName', row.get('Event', ''))
+            if ev: events.add(ev)
+    return sorted(list(events))
 
-def layout_and_print_score(directory, mode='booklet', orientation='portrait', printer_name=None, booklet_dir='left', dpi=300):
-    if not os.path.exists(directory):
-        raise FileNotFoundError(f"ディレクトリが見つかりません: {directory}")
-        
+def get_unique_piece_names(db_csv_path="scores_db.csv"):
+    """
+    サジェスト用に、DBに存在するユニークな楽曲名のリストを取得する。
+    """
+    if not os.path.exists(db_csv_path): return []
+    pieces = set()
+    with open(db_csv_path, mode='r', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            pi = row.get('Piece', '')
+            if pi: pieces.add(pi)
+    return sorted(list(pieces))
+
+def get_all_scores_grouped(db_csv_path="scores_db.csv"):
+    """
+    (Year, EventName) のタプルでグループ化し、辞書で返す
+    """
+    if not os.path.exists(db_csv_path): return {}
+    data = {}
+    with open(db_csv_path, mode='r', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            y = row.get('Year', '')
+            ev = row.get('EventName', row.get('Event', ''))
+            pi = row.get('Piece', '')
+            if not ev and not pi: continue
+            
+            key = (y, ev)
+            if key not in data:
+                data[key] = set()
+            data[key].add(pi)
+            
+    # 年度と行事名でソート（降順・昇順の制御）
+    sorted_data = {}
+    for key in sorted(data.keys(), key=lambda k: (k[0], k[1])):
+        sorted_data[key] = sorted(list(data[key]))
+    return sorted_data
+
+def search_pieces_by_keyword(keyword, db_csv_path="scores_db.csv"):
+    if not os.path.exists(db_csv_path): return []
+    results = set()
+    keyword = keyword.lower()
+    
+    with open(db_csv_path, mode='r', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            y = row.get('Year', '')
+            ev = row.get('EventName', row.get('Event', ''))
+            pi = row.get('Piece', '')
+            combined = f"{y}{ev}"
+            
+            if keyword in combined.lower() or keyword in pi.lower():
+                results.add((y, ev, pi))
+                
+    return sorted(list(results), key=lambda x: (x[0], x[1], x[2]))
+
+def get_piece_details(year, event_name, piece, db_csv_path="scores_db.csv"):
+    if not os.path.exists(db_csv_path): return []
+    instruments = []
+    
+    with open(db_csv_path, mode='r', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            r_year = row.get('Year', '')
+            r_ev = row.get('EventName', row.get('Event', ''))
+            if r_year == year and r_ev == event_name and row.get('Piece') == piece:
+                instruments.append({
+                    'name': row.get('Instrument', ''),
+                    'dir': row.get('Directory', '')
+                })
+                
+    return sorted(instruments, key=lambda x: x['name'])
+
+def apply_layout(directory, mode='booklet', orientation='portrait', booklet_dir='left', dpi=300):
+    if not os.path.exists(directory): raise FileNotFoundError(f"ディレクトリが見つかりません: {directory}")
     image_files = sorted(glob.glob(os.path.join(directory, "*.png")))
-    if not image_files:
-        raise ValueError(f"印刷する画像がありません: {directory}")
+    if not image_files: raise ValueError(f"画像がありません: {directory}")
         
     pages = [Image.open(f) for f in image_files]
     output_pages = []
@@ -311,7 +391,6 @@ def layout_and_print_score(directory, mode='booklet', orientation='portrait', pr
         bw, bh = (mm_to_px(210, dpi), mm_to_px(297, dpi)) if orientation == 'portrait' else (mm_to_px(297, dpi), mm_to_px(210, dpi))
         blank = Image.new('L', (bw, bh), 255)
         while len(pages) % 4 != 0: pages.append(blank)
-        
         total = len(pages)
         for i in range(total // 2):
             if booklet_dir == 'left':
@@ -320,25 +399,21 @@ def layout_and_print_score(directory, mode='booklet', orientation='portrait', pr
                 idx1, idx2 = (i, total - 1 - i) if i % 2 == 0 else (total - 1 - i, i)
             output_pages.append(create_a3(pages[idx1], pages[idx2]))
 
+    return output_pages
+
+def layout_and_print_score(directory, mode='booklet', orientation='portrait', printer_name=None, booklet_dir='left', dpi=300):
+    output_pages = apply_layout(directory, mode, orientation, booklet_dir, dpi)
     temp_pdf_path = "/tmp/score_print_temp.pdf"
     if output_pages:
         output_pages[0].save(temp_pdf_path, save_all=True, append_images=output_pages[1:], format='PDF', resolution=dpi)
-        
         print_cmd = ["lp"]
-        if printer_name:
-            print_cmd.extend(["-d", printer_name])
-            
-        if mode in ['2in1', 'booklet']:
-            print_cmd.extend(["-o", "media=A3"])
-        else:
-            print_cmd.extend(["-o", "media=A4"])
-            
+        if printer_name: print_cmd.extend(["-d", printer_name])
+        if mode in ['2in1', 'booklet']: print_cmd.extend(["-o", "media=A3"])
+        else: print_cmd.extend(["-o", "media=A4"])
         print_cmd.append(temp_pdf_path)
         
         result = subprocess.run(print_cmd, capture_output=True, text=True)
-        
-        if result.returncode != 0:
-            raise RuntimeError(f"印刷コマンドに失敗しました:\n{result.stderr}")
+        if result.returncode != 0: raise RuntimeError(f"印刷コマンドに失敗しました:\n{result.stderr}")
         return True
     return False
 

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>楽譜一覧</title>
+    <style>
+        body { font-family: sans-serif; background: #f4f4f9; padding: 20px; color: #333; }
+        .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        h1 { border-bottom: 2px solid #2c3e50; padding-bottom: 5px; }
+        .event-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 20px; background: #fafafa; }
+        .event-title { margin-top: 0; color: #e67e22; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+        ul { list-style-type: none; padding-left: 0; }
+        li { margin-bottom: 10px; }
+        a { text-decoration: none; color: #3498db; font-size: 1.1em; font-weight: bold; display: block; padding: 10px; border-radius: 4px; background: white; border: 1px solid #eee; transition: background 0.2s; }
+        a:hover { background: #eef2f5; color: #2980b9; }
+        .btn-back { display: inline-block; background: #95a5a6; color: white; padding: 10px 15px; border-radius: 4px; text-decoration: none; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="{{ url_for('index') }}" class="btn-back">◀ トップへ戻る</a>
+
+        {% if keyword is defined %}
+            <h1>「{{ keyword }}」の検索結果</h1>
+            {% if search_results %}
+                <ul>
+                {% for y, ev, pi in search_results %}
+                    <li>
+                        <a href="{{ url_for('piece_details', year=y, event_name=ev, piece=pi) }}">
+                            {{ pi }} <span style="font-size:0.8em; color:#7f8c8d;">(行事: {{ y }}{{ ev }})</span>
+                        </a>
+                    </li>
+                {% endfor %}
+                </ul>
+            {% else %}
+                <p>該当する楽譜が見つかりませんでした。</p>
+            {% endif %}
+            
+        {% else %}
+            <h1>登録済みの楽譜一覧</h1>
+            {% if grouped_data %}
+                {% for key, pieces in grouped_data.items() %}
+                    <div class="event-card">
+                        <h3 class="event-title">📅 {{ key[0] }}{{ key[1] }}</h3>
+                        <ul>
+                        {% for pi in pieces %}
+                            <li><a href="{{ url_for('piece_details', year=key[0], event_name=key[1], piece=pi) }}">🎵 {{ pi }}</a></li>
+                        {% endfor %}
+                        </ul>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p>登録されている楽譜がありません。</p>
+            {% endif %}
+        {% endif %}
+    </div>
+</body>
+</html>
