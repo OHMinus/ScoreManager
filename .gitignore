@@ -215,4 +215,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# files for mofification and database
 static/temp
+scores_db.csv
+score_data
