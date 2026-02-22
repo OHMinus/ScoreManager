@@ -11,8 +11,8 @@ app = Flask(__name__)
 app.secret_key = 'score_processor_secret_key'
 
 # 一時ファイルの保存先設定
-TEMP_UPLOAD_DIR = os.path.join('static', 'temp', 'uploads')
-TEMP_PREVIEW_DIR = os.path.join('static', 'temp', 'previews')
+TEMP_UPLOAD_DIR = os.path.join('temp', 'uploads')
+TEMP_PREVIEW_DIR = os.path.join('temp', 'previews')
 os.makedirs(TEMP_UPLOAD_DIR, exist_ok=True)
 os.makedirs(TEMP_PREVIEW_DIR, exist_ok=True)
 
