@@ -16,8 +16,11 @@ app.secret_key = 'score_processor_secret_key'
 
 TEMP_UPLOAD_DIR = os.path.join('static', 'temp', 'uploads')
 TEMP_PREVIEW_DIR = os.path.join('static', 'temp', 'previews')
+TEMP_DEBUG_DIR = os.path.join('static', 'temp', 'debug') # 新規追加: デバッグ画像の保存先
+
 os.makedirs(TEMP_UPLOAD_DIR, exist_ok=True)
 os.makedirs(TEMP_PREVIEW_DIR, exist_ok=True)
+os.makedirs(TEMP_DEBUG_DIR, exist_ok=True)
 
 def clear_temp_dir(directory, max_age_hours=1):
     now = time.time()
@@ -46,6 +49,7 @@ def extract_info_from_header(image_path):
 def index():
     clear_temp_dir(TEMP_UPLOAD_DIR)
     clear_temp_dir(TEMP_PREVIEW_DIR)
+    clear_temp_dir(TEMP_DEBUG_DIR)
     return render_template('index.html')
 
 @app.route('/process', methods=['POST'])
@@ -66,7 +70,8 @@ def process_files():
             file.save(temp_path)
             if i == 0: first_file_path = temp_path
             
-            pages = score_api.process_file_to_1in1(temp_path, score_api.DEFAULT_CONFIG)
+            # デバッグディレクトリを指定して処理を実行
+            pages = score_api.process_file_to_1in1(temp_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR)
             for page in pages:
                 unique_filename = f"{uuid.uuid4().hex}.png"
                 preview_path = os.path.join(TEMP_PREVIEW_DIR, unique_filename)
@@ -95,7 +100,9 @@ def scan_execute():
     try:
         temp_scan_path = os.path.join(TEMP_UPLOAD_DIR, f"scanned_{uuid.uuid4().hex}.png")
         score_api.scan_score_from_epson(temp_scan_path, dpi=score_api.DEFAULT_CONFIG['dpi'], device_name=device_name if device_name else None)
-        pages = score_api.process_file_to_1in1(temp_scan_path, score_api.DEFAULT_CONFIG)
+        
+        # デバッグディレクトリを指定して処理を実行
+        pages = score_api.process_file_to_1in1(temp_scan_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR)
         for page in pages:
             unique_filename = f"{uuid.uuid4().hex}.png"
             preview_path = os.path.join(TEMP_PREVIEW_DIR, unique_filename)
@@ -207,8 +214,6 @@ def piece_details():
     
     return render_template('piece.html', details=details, event_names=score_api.get_unique_event_names(), current_year=datetime.datetime.now().year)
 
-# ===== ▼ 新規追加: 楽譜閲覧画面と画像配信API ▼ =====
-
 @app.route('/view_score')
 def view_score():
     score_id = request.args.get('id', '').strip()
@@ -233,7 +238,6 @@ def view_score():
 
 @app.route('/score_image/<score_id>/<instrument>/<filename>')
 def score_image(score_id, instrument, filename):
-    """安全なディレクトリから楽譜画像をWebへ配信する"""
     details = score_api.get_piece_details(score_id)
     if not details: return "Not found", 404
     
@@ -247,8 +251,6 @@ def score_image(score_id, instrument, filename):
         return "Not found", 404
         
     return send_file(os.path.join(target_dir, filename))
-
-# ===================================================
 
 @app.route('/update_piece_info', methods=['POST'])
 def update_piece_info():
@@ -297,8 +299,6 @@ def output_action():
         if action_type == 'print':
             score_api.layout_and_print_score(directory=directory, mode=mode, orientation=score_api.DEFAULT_CONFIG['page_orientation'], printer_name=printer if printer else None, dpi=score_api.DEFAULT_CONFIG['dpi'])
             flash(f'[{piece} - {inst}] の印刷ジョブを送信しました！')
-            
-            # もし閲覧画面から印刷を実行した場合は、閲覧画面へ戻す
             if request.form.get('from_view'):
                 return redirect(url_for('view_score', id=score_id, instrument=inst))
             return redirect(url_for('piece_details', id=score_id))
@@ -323,6 +323,13 @@ def output_action():
     except Exception as e:
         flash(f'出力エラー: {str(e)}')
         return redirect(url_for('piece_details', id=score_id))
+
+# ===== ▼ 新規追加: デバッグ画面表示API ▼ =====
+@app.route('/debug')
+def debug_view():
+    debug_files = sorted(glob.glob(os.path.join(TEMP_DEBUG_DIR, "*.jpg")), reverse=True)
+    filenames = [os.path.basename(f) for f in debug_files]
+    return render_template('debug.html', debug_images=filenames)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

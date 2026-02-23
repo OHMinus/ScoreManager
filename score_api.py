@@ -16,6 +16,111 @@ DEFAULT_CONFIG = {
     'final_closing_kernel': 2, 'booklet_direction': 'left'
 }
 
+def generate_debug_summary(steps, out_path):
+    target_width = 1000
+    canvas_parts = []
+    for title, img in steps:
+        if len(img.shape) == 2:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        h, w = img.shape[:2]
+        scale = target_width / float(w)
+        new_h = int(h * scale)
+        resized = cv2.resize(img, (target_width, new_h))
+        title_bar = np.zeros((50, target_width, 3), dtype=np.uint8)
+        cv2.putText(title_bar, title, (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+        canvas_parts.append(title_bar)
+        canvas_parts.append(resized)
+    final_img = np.vstack(canvas_parts)
+    cv2.imwrite(out_path, final_img)
+
+def ensure_horizontal(cv_img):
+    """
+    【Split前処理】
+    ピクセル分布の分散から五線譜が「縦か横か」を判定し、
+    縦向き(90度寝ている)の場合は水平になるように回転させる。
+    """
+    print("\n--- [DEBUG] 水平判定を開始 ---")
+    scale = 800.0 / max(cv_img.shape[0], cv_img.shape[1])
+    small = cv2.resize(cv_img, (int(cv_img.shape[1] * scale), int(cv_img.shape[0] * scale)))
+    gray = small if len(small.shape) == 2 else cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 128, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    
+    proj_h = np.sum(thresh, axis=1)
+    proj_v = np.sum(thresh, axis=0)
+    var_h = np.var(proj_h)
+    var_v = np.var(proj_v)
+    
+    if var_h > var_v:
+        print(f"[DEBUG] 判定: 五線譜は水平方向です (Var_H:{var_h:.0f} > Var_V:{var_v:.0f})")
+        return cv_img
+    else:
+        print(f"[DEBUG] 判定: 五線譜は垂直方向です (Var_H:{var_h:.0f} < Var_V:{var_v:.0f}) -> 90度回転します")
+        return cv2.rotate(cv_img, cv2.ROTATE_90_CLOCKWISE)
+
+def ensure_upright(cv_img, return_debug=False):
+    """
+    【Split後処理】
+    単一ページに対して「左重みの法則」を適用し、
+    右側が重い場合は逆さま(180度)と判定して補正する。
+    """
+    print("--- [DEBUG] 上下判定(180度)を開始 ---")
+    scale = 800.0 / max(cv_img.shape[0], cv_img.shape[1])
+    small = cv2.resize(cv_img, (int(cv_img.shape[1] * scale), int(cv_img.shape[0] * scale)))
+    gray = small if len(small.shape) == 2 else cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 128, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    
+    # 余白を切り落とし、楽譜の「コンテンツ部分」だけを抽出
+    coords = cv2.findNonZero(thresh)
+    if coords is not None:
+        x, y, w, h = cv2.boundingRect(coords)
+        content = thresh[y:y+h, x:x+w]
+    else:
+        content = thresh
+        w = content.shape[1]
+        
+    # コンテンツ内の「縦線（音部記号・括弧・小節線）」だけを抽出
+    v_k = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 15))
+    verticals = cv2.morphologyEx(content, cv2.MORPH_OPEN, v_k)
+    
+    # 左端 15% と 右端 15% のインク（縦線）密度を比較
+    margin = max(10, int(w * 0.15))
+    left_density = np.sum(verticals[:, :margin])
+    right_density = np.sum(verticals[:, -margin:])
+    
+    print(f"[DEBUG] 左端インク量: {left_density:.0f} | 右端インク量: {right_density:.0f}")
+    
+    is_upside_down = False
+    if right_density > left_density * 1.1:
+        is_upside_down = True
+        print("[DEBUG] -> 右側の方が重いため、逆さま(180度反転)と判断しました。\n")
+        res_img = cv2.rotate(cv_img, cv2.ROTATE_180)
+    else:
+        print("[DEBUG] -> 左側の方が重いため、正位置と判断しました。\n")
+        res_img = cv_img
+        
+    # デバッグ描画
+    if return_debug:
+        debug_bg = cv2.bitwise_not(verticals)
+        debug_color = cv2.cvtColor(debug_bg, cv2.COLOR_GRAY2BGR)
+        overlay = debug_color.copy()
+        cv2.rectangle(overlay, (0, 0), (margin, content.shape[0]), (255, 0, 0), -1)  # 青(左)
+        cv2.rectangle(overlay, (content.shape[1] - margin, 0), (content.shape[1], content.shape[0]), (0, 0, 255), -1) # 赤(右)
+        cv2.addWeighted(overlay, 0.2, debug_color, 0.8, 0, debug_color)
+        
+        cv2.putText(debug_color, f"LEFT: {left_density:.0f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 0, 0), 2)
+        (tw, _), _ = cv2.getTextSize(f"RIGHT: {right_density:.0f}", cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+        cv2.putText(debug_color, f"RIGHT: {right_density:.0f}", (content.shape[1] - margin - tw - 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 200), 2)
+        
+        res_text = "ROTATED 180" if is_upside_down else "UPRIGHT (OK)"
+        color = (0, 0, 255) if is_upside_down else (0, 255, 0)
+        (tw, th), _ = cv2.getTextSize(res_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 3)
+        cv2.rectangle(debug_color, (content.shape[1]//2 - tw//2 - 10, 10), (content.shape[1]//2 + tw//2 + 10, 20 + th + 10), (0, 0, 0), -1)
+        cv2.putText(debug_color, res_text, (content.shape[1]//2 - tw//2, 20 + th), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 3)
+        
+        return res_img, debug_color
+        
+    return res_img
+
 def mm_to_px(mm, dpi): return int(mm * dpi / 25.4)
 def adjust_dynamic_range(cv_img, config):
     gray = cv_img if len(cv_img.shape) == 2 else cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
@@ -150,16 +255,56 @@ def scan_score_from_epson(output_filepath, dpi=300, device_name=None):
     except FileNotFoundError:
         raise FileNotFoundError("scanimage コマンドが見つかりません。")
 
-def process_file_to_1in1(file_path, config=DEFAULT_CONFIG):
+def process_file_to_1in1(file_path, config=DEFAULT_CONFIG, debug_out_dir=None):
     file_bytes = np.fromfile(file_path, dtype=np.uint8)
     cv_img = cv2.imdecode(file_bytes, cv2.IMREAD_GRAYSCALE)
     if cv_img is None: raise ValueError(f"画像を読み込めません: {file_path}")
+    
+    debug_steps = []
+    def add_debug(title, img):
+        if debug_out_dir:
+            if isinstance(img, Image.Image):
+                img_cv = np.array(img)
+                if len(img_cv.shape) == 3: img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGB2BGR)
+            else:
+                img_cv = img.copy()
+            debug_steps.append((title, img_cv))
+
+    add_debug("1_Original", cv_img)
+
     cv_img = adjust_dynamic_range(cv_img, config)
+    add_debug("2_Adjusted_Dynamic_Range", cv_img)
+
+    # ★ ステップ1: Split前に画像が「水平」になるようにだけ補正する
+    cv_img = ensure_horizontal(cv_img)
+    add_debug("3_Ensure_Horizontal", cv_img)
+        
     cv_img = deskew_and_orient_score(cv_img, config)
+    add_debug("4_Deskew", cv_img)
+
+    # 画像を分割する
     split_images = detect_and_split_candidates(cv_img, config)
     processed_pages = []
-    for sub_img in split_images:
-        processed_pages.append(crop_margins_and_fit(sub_img, config))
+    
+    for idx, sub_img in enumerate(split_images):
+        add_debug(f"5_Split_Candidate_{idx+1}", sub_img)
+        
+        # ★ ステップ2: Splitされた「1ページ」に対して、上下の向きを判定・補正する
+        if debug_out_dir:
+            sub_img, debug_upright = ensure_upright(sub_img, return_debug=True)
+            add_debug(f"6_Ensure_Upright_{idx+1}", debug_upright)
+        else:
+            sub_img = ensure_upright(sub_img)
+            
+        cropped = crop_margins_and_fit(sub_img, config)
+        add_debug(f"7_Cropped_Final_Page_{idx+1}", cropped)
+        processed_pages.append(cropped)
+        
+    if debug_out_dir:
+        os.makedirs(debug_out_dir, exist_ok=True)
+        out_name = os.path.join(debug_out_dir, f"debug_{uuid.uuid4().hex[:8]}.jpg")
+        generate_debug_summary(debug_steps, out_name)
+
     return processed_pages
 
 # ==========================================
@@ -182,8 +327,6 @@ def save_and_register_score(processed_pages_list, year, event_name, piece_name, 
     
     if score_id and score_id in db:
         score = db[score_id]
-        
-        # 行事が存在しなければ配列に追加する
         event_exists = any(e.get('year') == str(year) and e.get('event_name') == str(event_name) for e in score.get('events', []))
         if not event_exists:
             score.setdefault('events', []).append({'year': str(year), 'event_name': str(event_name)})
@@ -277,13 +420,12 @@ def update_composer_arranger(score_id, composer, arranger):
     return False
 
 def add_event_to_score(score_id, dest_year, dest_event):
-    """既存のUUIDに行事（イベント）だけを追加紐付けする"""
     db = load_db()
     if score_id not in db: return False
     
     events = db[score_id].setdefault('events', [])
     if any(e.get('year') == str(dest_year) and e.get('event_name') == str(dest_event) for e in events):
-        return True # すでに存在する場合は何もしない
+        return True 
         
     events.append({'year': str(dest_year), 'event_name': str(dest_event)})
     save_db(db)
@@ -347,7 +489,6 @@ def search_pieces_by_keyword(keyword):
             })
     return sorted(results, key=lambda x: x['piece'])
 
-# --- 印刷・面付け関連 (変更なし) ---
 def apply_layout(directory, mode='booklet', orientation='portrait', booklet_dir='left', dpi=300):
     if not os.path.exists(directory): raise FileNotFoundError(f"ディレクトリが見つかりません: {directory}")
     image_files = sorted(glob.glob(os.path.join(directory, "*.png")))
