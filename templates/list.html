@@ -4,35 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>楽譜一覧</title>
-    <style>
-        body { font-family: sans-serif; background: #f4f4f9; padding: 20px; color: #333; }
-        .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        h1 { border-bottom: 2px solid #2c3e50; padding-bottom: 5px; margin-bottom: 20px; }
-        .tabs { display: flex; margin-bottom: 20px; border-bottom: 2px solid #2c3e50; }
-        .tab { flex: 1; text-align: center; padding: 12px; background: #e9ecef; color: #555; text-decoration: none; font-weight: bold; border-radius: 8px 8px 0 0; margin-right: 5px; transition: background 0.2s; }
-        .tab:last-child { margin-right: 0; }
-        .tab.active { background: #2c3e50; color: white; }
-        .tab:hover:not(.active) { background: #d1d8e0; }
-        
-        .event-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 20px; background: #fafafa; }
-        .event-title { margin-top: 0; color: #e67e22; border-bottom: 1px solid #eee; padding-bottom: 5px; }
-        
-        ul { list-style-type: none; padding-left: 0; }
-        li { margin-bottom: 10px; }
-        a.list-item { text-decoration: none; color: #2c3e50; font-size: 1.1em; font-weight: bold; display: block; padding: 10px; border-radius: 4px; background: white; border: 1px solid #eee; transition: background 0.2s; }
-        a.list-item:hover { background: #eef2f5; color: #2980b9; }
-        .meta-text { font-size: 0.8em; color: #7f8c8d; font-weight: normal; margin-left: 8px; }
-        .btn-back { display: inline-block; background: #95a5a6; color: white; padding: 10px 15px; border-radius: 4px; text-decoration: none; margin-bottom: 20px; }
-
-        /* 曲名順モード用の専用スタイル */
-        .piece-title { margin-top: 0; margin-bottom: 8px; font-size: 1.3em; }
-        .piece-link { text-decoration: none; color: #3498db; transition: color 0.2s; }
-        .piece-link:hover { color: #2980b9; text-decoration: underline; }
-        .info-box { margin-left: 30px; font-size: 0.95em; color: #555; }
-        .history-tag { color: #e67e22; font-weight: bold; background: #fdf2e9; padding: 2px 6px; border-radius: 4px; border: 1px solid #f8c471; margin-right: 5px; display: inline-block; margin-top: 5px;}
-    </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
-<body>
+<body class="page-list">
     <div class="container">
         <a href="{{ url_for('index') }}" class="btn-back">◀ トップへ戻る</a>
 
