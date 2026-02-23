@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>スキャン作業 - Score Processor</title>
+    <style>
+        body { font-family: sans-serif; background: #e9ecef; padding: 20px; color: #333; text-align: center; }
+        .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .flash-message { background: #f8d7da; color: #721c24; padding: 10px; border-radius: 4px; margin-bottom: 15px; }
+        h1 { color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        .status-box { background: #eaf2f8; padding: 10px; border-radius: 4px; margin-bottom: 20px; font-weight: bold; color: #2980b9; font-size: 1.2em; }
+        button { border: none; padding: 15px; font-size: 18px; cursor: pointer; width: 100%; border-radius: 4px; margin-bottom: 15px; font-weight: bold; color: white; }
+        .btn-scan { background: #27ae60; }
+        .btn-finish { background: #3498db; }
+        .btn-cancel { background: #95a5a6; }
+        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #27ae60; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 10px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #loading-overlay { display: none; margin-bottom: 15px; }
+        .thumb-grid { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 20px; border-top: 2px dashed #eee; padding-top: 20px; }
+        .thumb-item { border: 1px solid #ccc; border-radius: 4px; padding: 5px; background: #fff; width: 100px; }
+        .thumb-item img { max-width: 100%; height: auto; }
+        .thumb-item p { margin: 5px 0 0 0; font-size: 12px; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>スキャン作業</h1>
+        
+        <div class="status-box">
+            現在読み込み済みのページ数: {{ scanned_files|length }} ページ
+        </div>
+
+        {% with messages = get_flashed_messages() %}
+          {% if messages %}
+            <div class="flash-message">
+              {% for message in messages %}
+                <p style="margin:0;">{{ message }}</p>
+              {% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
+
+        <form method="POST" id="scanForm">
+            <input type="hidden" name="device_name" value="{{ device_name|default('') }}">
+            
+            {% for filename in scanned_files %}
+                <input type="hidden" name="scanned_files[]" value="{{ filename }}">
+            {% endfor %}
+            
+            <div id="loading-overlay">
+                <div class="loader"></div>
+                <p>スキャナー稼働・画像処理中...<br><small>※完了してページが更新されるまで触らずにお待ちください</small></p>
+            </div>
+
+            <button type="submit" formaction="{{ url_for('scan_execute') }}" class="btn-scan" onclick="showLoading()">
+                🖨️ スキャナーを動かしてページを読み込む
+            </button>
+            
+            <p style="color: #666; font-size: 14px; margin-bottom: 25px;">
+                ※楽譜をセットして上のボタンを押してください。必要なページ数だけ繰り返します。
+            </p>
+
+            {% if scanned_files %}
+            <button type="submit" formaction="{{ url_for('scan_to_preview') }}" class="btn-finish" onclick="showLoading()">
+                ✅ 全てスキャン完了（プレビュー・登録画面へ進む）
+            </button>
+            {% else %}
+            <button type="button" class="btn-finish" style="background: #bdc3c7; cursor: not-allowed;">
+                ✅ 全てスキャン完了（プレビュー・登録画面へ進む）
+            </button>
+            {% endif %}
+        </form>
+
+        <form action="{{ url_for('index') }}" method="GET">
+            <button type="submit" class="btn-cancel">中止してトップへ戻る</button>
+        </form>
+
+        {% if scanned_files %}
+        <div class="thumb-grid">
+            {% for filename in scanned_files %}
+            <div class="thumb-item">
+                <img src="{{ url_for('static', filename='temp/previews/' ~ filename) }}">
+                <p>Page {{ loop.index }}</p>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+    </div>
+
+    <script>
+        function showLoading() {
+            var btns = document.getElementsByTagName('button');
+            for(var i=0; i<btns.length; i++) btns[i].style.display = 'none';
+            document.getElementById('loading-overlay').style.display = 'block';
+        }
+    </script>
+</body>
+</html>

@@ -11,14 +11,12 @@
         h2 { border-bottom: 2px solid #2c3e50; padding-bottom: 5px; margin-top: 30px; }
         .form-group { margin-bottom: 15px; }
         label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input[type="text"], input[type="number"], input[type="file"] { width: 100%; padding: 10px; box-sizing: border-box; }
+        input[type="text"], input[type="file"] { width: 100%; padding: 10px; box-sizing: border-box; }
         button, .btn-link { display: inline-block; background: #3498db; color: white; border: none; padding: 12px 15px; font-size: 16px; cursor: pointer; width: 100%; border-radius: 4px; text-align: center; text-decoration: none; box-sizing: border-box; }
         button:hover, .btn-link:hover { background: #2980b9; }
         .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 10px auto; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         #loading-overlay { display: none; text-align: center; padding: 15px; background: #e9ecef; border-radius: 4px; margin-top: 15px;}
-        .flex-row { display: flex; gap: 10px; }
-        .flex-row .form-group { flex: 1; }
         .action-box { background: #fafafa; border: 1px solid #ddd; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
     </style>
 </head>
@@ -36,39 +34,24 @@
           {% endif %}
         {% endwith %}
 
-        <h2>1. 画像の処理と登録</h2>
+        <h2>1. 楽譜の取り込み</h2>
         <form method="POST" enctype="multipart/form-data" onsubmit="showLoading()">
-            <div class="flex-row">
-                <div class="form-group" style="flex: 0.3;">
-                    <label for="year">年度:</label>
-                    <input type="number" id="year" name="year" value="{{ current_year }}" required>
-                </div>
-                <div class="form-group">
-                    <label for="event_name">演奏会名:</label>
-                    <input type="text" id="event_name" name="event_name" list="event-list" placeholder="例: 定期演奏会" required autocomplete="off">
-                    <datalist id="event-list">
-                        {% for name in event_names %}
-                            <option value="{{ name }}"></option>
-                        {% endfor %}
-                    </datalist>
-                </div>
-            </div>
             
             <div class="action-box">
                 <label for="files">【方法A】画像ファイルから登録:</label>
                 <input type="file" id="files" name="files" accept="image/*" multiple style="margin-bottom: 10px;">
-                <button type="submit" formaction="{{ url_for('process_files') }}" id="btn-process">ファイルを選択してプレビュー</button>
+                <button type="submit" formaction="{{ url_for('process_files') }}" id="btn-process">ファイルを選択してプレビューへ</button>
             </div>
 
             <div class="action-box">
                 <label for="device_name">【方法B】スキャナーから直接登録:</label>
                 <input type="text" id="device_name" name="device_name" placeholder="デバイス名 (空欄でシステムデフォルトを使用)" style="margin-bottom: 10px;">
-                <button type="submit" formaction="{{ url_for('scan_files') }}" id="btn-scan" style="background: #27ae60;">スキャナーを起動してプレビュー</button>
+                <button type="submit" formaction="{{ url_for('scan_ui') }}" id="btn-scan" style="background: #27ae60;">スキャン作業を開始する</button>
             </div>
 
             <div id="loading-overlay">
                 <div class="loader"></div>
-                <p style="margin: 5px 0 0 0; font-weight: bold; color: #2c3e50;">画像を取得・処理中... 画面が変わるまでお待ちください</p>
+                <p style="margin: 5px 0 0 0; font-weight: bold; color: #2c3e50;">処理中... 画面が変わるまでお待ちください</p>
             </div>
         </form>
 
@@ -85,7 +68,6 @@
 
     <script>
         function showLoading() {
-            // 送信時にボタンを非表示にし、二重送信を防止
             document.getElementById('btn-process').style.display = 'none';
             document.getElementById('btn-scan').style.display = 'none';
             document.getElementById('loading-overlay').style.display = 'block';

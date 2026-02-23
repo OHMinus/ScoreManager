@@ -20,7 +20,6 @@ os.makedirs(TEMP_UPLOAD_DIR, exist_ok=True)
 os.makedirs(TEMP_PREVIEW_DIR, exist_ok=True)
 
 def clear_temp_dir(directory, max_age_hours=1):
-    """複数回のスキャン中にファイルが消えないよう、1時間以上古いファイルのみ削除する"""
     now = time.time()
     for f in glob.glob(os.path.join(directory, '*')):
         try:
@@ -49,9 +48,7 @@ def extract_info_from_header(image_path):
 def index():
     clear_temp_dir(TEMP_UPLOAD_DIR)
     clear_temp_dir(TEMP_PREVIEW_DIR)
-    event_names = score_api.get_unique_event_names()
-    current_year = datetime.datetime.now().year
-    return render_template('index.html', event_names=event_names, current_year=current_year)
+    return render_template('index.html')
 
 @app.route('/process', methods=['POST'])
 def process_files():
@@ -63,9 +60,8 @@ def process_files():
         flash('ファイルが選択されていません。')
         return redirect(url_for('index'))
 
-    year = request.form.get('year', '')
-    event_name = request.form.get('event_name', '')
-
+    clear_temp_dir(TEMP_UPLOAD_DIR)
+    clear_temp_dir(TEMP_PREVIEW_DIR)
     preview_filenames = []
     first_file_path = None
     
@@ -88,36 +84,85 @@ def process_files():
             piece_guess, inst_guess = extract_info_from_header(first_file_path)
             
         piece_names = score_api.get_unique_piece_names()
+        event_names = score_api.get_unique_event_names()
+        current_year = datetime.datetime.now().year
             
         return render_template('preview.html', previews=preview_filenames, 
-                               year=year, event_name=event_name,
+                               year=current_year, event_name="",
                                piece_guess=piece_guess, inst_guess=inst_guess,
-                               piece_names=piece_names)
+                               piece_names=piece_names, event_names=event_names)
     except Exception as e:
         flash(f'処理エラー: {str(e)}')
         return redirect(url_for('index'))
 
+@app.route('/scan_ui', methods=['POST'])
+def scan_ui():
+    device_name = request.form.get('device_name', '')
+    return render_template('scan.html', device_name=device_name, scanned_files=[])
+
+@app.route('/scan_execute', methods=['POST'])
+def scan_execute():
+    device_name = request.form.get('device_name', '')
+    scanned_files = request.form.getlist('scanned_files[]')
+    
+    try:
+        temp_scan_path = os.path.join(TEMP_UPLOAD_DIR, f"scanned_{uuid.uuid4().hex}.png")
+        score_api.scan_score_from_epson(temp_scan_path, dpi=score_api.DEFAULT_CONFIG['dpi'], device_name=device_name if device_name else None)
+        
+        pages = score_api.process_file_to_1in1(temp_scan_path, score_api.DEFAULT_CONFIG)
+        
+        for page in pages:
+            unique_filename = f"{uuid.uuid4().hex}.png"
+            preview_path = os.path.join(TEMP_PREVIEW_DIR, unique_filename)
+            page.save(preview_path, optimize=True)
+            scanned_files.append(unique_filename)
+            
+        return render_template('scan.html', device_name=device_name, scanned_files=scanned_files)
+    except Exception as e:
+        flash(f'スキャンエラー: {str(e)}')
+        return render_template('scan.html', device_name=device_name, scanned_files=scanned_files)
+
+@app.route('/scan_to_preview', methods=['POST'])
+def scan_to_preview():
+    scanned_files = request.form.getlist('scanned_files[]')
+
+    if not scanned_files:
+        flash('スキャンされた画像がありません。')
+        return redirect(url_for('index'))
+
+    first_file_path = os.path.join(TEMP_PREVIEW_DIR, scanned_files[0])
+    piece_guess, inst_guess = extract_info_from_header(first_file_path)
+    
+    piece_names = score_api.get_unique_piece_names()
+    event_names = score_api.get_unique_event_names()
+    current_year = datetime.datetime.now().year
+
+    return render_template('preview.html', previews=scanned_files, 
+                           year=current_year, event_name="",
+                           piece_guess=piece_guess, inst_guess=inst_guess,
+                           piece_names=piece_names, event_names=event_names)
+
 @app.route('/update_order', methods=['POST'])
 def update_order():
-    year = request.form.get('year', '')
+    year = request.form.get('year', datetime.datetime.now().year)
     event_name = request.form.get('event_name', '')
     piece = request.form.get('piece', '')
     instrument = request.form.get('instrument', '')
-    device_name = request.form.get('device_name', '')
     filenames = request.form.getlist('filenames[]')
     orders = request.form.getlist('orders[]')
     
     piece_names = score_api.get_unique_piece_names()
+    event_names = score_api.get_unique_event_names()
     
     try:
         paired = [(int(o), f) for f, o in zip(filenames, orders)]
         paired.sort(key=lambda x: x[0])
         sorted_filenames = [f for _, f in paired]
         flash('ページの順番を更新しました。')
-        return render_template('preview.html', previews=sorted_filenames, year=year, event_name=event_name, piece_guess=piece, inst_guess=instrument, piece_names=piece_names, device_name=device_name)
+        return render_template('preview.html', previews=sorted_filenames, year=year, event_name=event_name, piece_guess=piece, inst_guess=instrument, piece_names=piece_names, event_names=event_names)
     except ValueError:
         flash('順序には数値を入力してください。')
-        return render_template('preview.html', previews=filenames, year=year, event_name=event_name, piece_guess=piece, inst_guess=instrument, piece_names=piece_names, device_name=device_name)
+        return render_template('preview.html', previews=filenames, year=year, event_name=event_name, piece_guess=piece, inst_guess=instrument, piece_names=piece_names, event_names=event_names)
 
 @app.route('/save', methods=['POST'])
 def save_score():
@@ -130,7 +175,8 @@ def save_score():
     if not piece or not instrument or not event_name or not year:
         flash('年度、演奏会名、楽曲名、楽器名をすべて入力してください。')
         piece_names = score_api.get_unique_piece_names()
-        return render_template('preview.html', previews=preview_filenames, year=year, event_name=event_name, piece_guess=piece, inst_guess=instrument, piece_names=piece_names, error="必須項目です")
+        event_names = score_api.get_unique_event_names()
+        return render_template('preview.html', previews=preview_filenames, year=year, event_name=event_name, piece_guess=piece, inst_guess=instrument, piece_names=piece_names, event_names=event_names, error="必須項目です")
     try:
         pages = [Image.open(os.path.join(TEMP_PREVIEW_DIR, fname)) for fname in preview_filenames]
         saved_dir = score_api.save_and_register_score(pages, year, event_name, piece, instrument)
@@ -140,7 +186,6 @@ def save_score():
         flash(f'保存エラー: {str(e)}')
         return redirect(url_for('index'))
 
-# --- 以下、前回の /list, /search, /piece, /output_action など続く ---
 @app.route('/list')
 def score_list():
     grouped_data = score_api.get_all_scores_grouped()
@@ -176,7 +221,7 @@ def output_action():
     inst = request.form.get('instrument', 'inst')
 
     if not directory or not os.path.exists(directory):
-        flash('エラー: 指定されたデータがサーバー上に見つかりません。')
+        flash('エラー: 指定されたデータが見つかりません。')
         return redirect(url_for('piece_details', year=year, event_name=event_name, piece=piece))
     try:
         if action_type == 'print':
