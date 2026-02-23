@@ -207,6 +207,49 @@ def piece_details():
     
     return render_template('piece.html', details=details, event_names=score_api.get_unique_event_names(), current_year=datetime.datetime.now().year)
 
+# ===== ▼ 新規追加: 楽譜閲覧画面と画像配信API ▼ =====
+
+@app.route('/view_score')
+def view_score():
+    score_id = request.args.get('id', '').strip()
+    instrument = request.args.get('instrument', '').strip()
+    if not score_id or not instrument: return redirect(url_for('score_list'))
+    
+    details = score_api.get_piece_details(score_id)
+    if not details: return redirect(url_for('score_list'))
+    
+    target_dir = None
+    for inst in details['instruments']:
+        if inst['name'] == instrument:
+            target_dir = inst['dir']
+            break
+            
+    if not target_dir: return redirect(url_for('piece_details', id=score_id))
+    
+    image_files = sorted(glob.glob(os.path.join(target_dir, "*.png")))
+    filenames = [os.path.basename(f) for f in image_files]
+    
+    return render_template('view_score.html', details=details, instrument=instrument, filenames=filenames, target_dir=target_dir)
+
+@app.route('/score_image/<score_id>/<instrument>/<filename>')
+def score_image(score_id, instrument, filename):
+    """安全なディレクトリから楽譜画像をWebへ配信する"""
+    details = score_api.get_piece_details(score_id)
+    if not details: return "Not found", 404
+    
+    target_dir = None
+    for inst in details['instruments']:
+        if inst['name'] == instrument:
+            target_dir = inst['dir']
+            break
+            
+    if not target_dir or not os.path.exists(os.path.join(target_dir, filename)):
+        return "Not found", 404
+        
+    return send_file(os.path.join(target_dir, filename))
+
+# ===================================================
+
 @app.route('/update_piece_info', methods=['POST'])
 def update_piece_info():
     score_id = request.form.get('score_id')
@@ -254,6 +297,10 @@ def output_action():
         if action_type == 'print':
             score_api.layout_and_print_score(directory=directory, mode=mode, orientation=score_api.DEFAULT_CONFIG['page_orientation'], printer_name=printer if printer else None, dpi=score_api.DEFAULT_CONFIG['dpi'])
             flash(f'[{piece} - {inst}] の印刷ジョブを送信しました！')
+            
+            # もし閲覧画面から印刷を実行した場合は、閲覧画面へ戻す
+            if request.form.get('from_view'):
+                return redirect(url_for('view_score', id=score_id, instrument=inst))
             return redirect(url_for('piece_details', id=score_id))
             
         output_pages = score_api.apply_layout(directory=directory, mode=mode, orientation=score_api.DEFAULT_CONFIG['page_orientation'], booklet_dir=score_api.DEFAULT_CONFIG['booklet_direction'], dpi=score_api.DEFAULT_CONFIG['dpi'])

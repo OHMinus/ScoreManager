@@ -43,7 +43,7 @@
                 {% for item in search_results %}
                     <li>
                         <a href="{{ url_for('piece_details', id=item.id) }}" class="list-item">
-                            🎵 {{ item.piece }} 
+                            {{ item.piece }} 
                             {% if item.composer or item.arranger %}
                                 <span class="meta-text">(作: {{ item.composer|default('-') }} / 編: {{ item.arranger|default('-') }})</span>
                             {% endif %}
@@ -65,19 +65,19 @@
             <h1>登録済みの楽譜一覧</h1>
             
             <div class="tabs">
-                <a href="{{ url_for('score_list', sort='event') }}" class="tab {% if sort_by == 'event' %}active{% endif %}">📅 行事別で見る</a>
-                <a href="{{ url_for('score_list', sort='piece') }}" class="tab {% if sort_by == 'piece' %}active{% endif %}">🎵 曲名順 (あいうえお順) で見る</a>
+                <a href="{{ url_for('score_list', sort='event') }}" class="tab {% if sort_by == 'event' %}active{% endif %}">行事別で見る</a>
+                <a href="{{ url_for('score_list', sort='piece') }}" class="tab {% if sort_by == 'piece' %}active{% endif %}">曲名順 (あいうえお順) で見る</a>
             </div>
 
             {% if sort_by == 'event' and grouped_data %}
                 {% for key, pieces in grouped_data.items() %}
                     <div class="event-card">
-                        <h3 class="event-title">📅 {{ key[0] }}{{ key[1] }}</h3>
+                        <h3 class="event-title">{{ key[0] }}{{ key[1] }}</h3>
                         <ul>
                         {% for item in pieces %}
                             <li>
                                 <a href="{{ url_for('piece_details', id=item.id) }}" class="list-item">
-                                    🎵 {{ item.piece }}
+                                    {{ item.piece }}
                                     {% if item.composer or item.arranger %}
                                         <span class="meta-text">(作: {{ item.composer|default('-') }} / 編: {{ item.arranger|default('-') }})</span>
                                     {% endif %}
@@ -93,19 +93,19 @@
                     <div class="event-card">
                         <h3 class="piece-title">
                             <a href="{{ url_for('piece_details', id=item.id) }}" class="piece-link">
-                                🎵 {{ item.piece }}
+                                {{ item.piece }}
                             </a>
                         </h3>
                         
                         <div class="info-box">
                             {% if item.composer or item.arranger %}
                                 <div style="margin-bottom: 5px;">
-                                    ✍️ 作: <strong>{{ item.composer|default('-') }}</strong> / 編: <strong>{{ item.arranger|default('-') }}</strong>
+                                    作: <strong>{{ item.composer|default('-') }}</strong> / 編: <strong>{{ item.arranger|default('-') }}</strong>
                                 </div>
                             {% endif %}
                             
                             <div>
-                                📅 採用履歴: 
+                                採用履歴: 
                                 {% for ev in item.events[:4] %}
                                     <span class="history-tag">{{ ev.year }}{{ ev.event_name }}</span>
                                 {% endfor %}

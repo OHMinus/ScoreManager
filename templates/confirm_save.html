@@ -31,7 +31,7 @@
         <h1>登録先の選択</h1>
         
         <div class="target-piece">
-            🎵 {{ piece }} <span style="font-weight:normal; font-size:0.8em; color:#ddd;">( パート: {{ instrument }} )</span>
+            {{ piece }} <span style="font-weight:normal; font-size:0.8em; color:#ddd;">( パート: {{ instrument }} )</span>
         </div>
 
         <form action="{{ url_for('save_score') }}" method="POST" id="confirmForm">
@@ -49,8 +49,8 @@
                     <input type="radio" name="save_mode" value="existing_{{ loop.index0 }}" required>
                     <span style="font-weight: bold; color: #2980b9;">既存の楽譜にパート/ページを追加・追記する</span>
                     <span class="meta-info">
-                        📅 {{ p[0] }} {{ p[1] }}<br>
-                        ✍️ 作: {{ p[2]|default('-') }} / 編: {{ p[3]|default('-') }}
+                        {{ p[0] }} {{ p[1] }}<br>
+                        作: {{ p[2]|default('-') }} / 編: {{ p[3]|default('-') }}
                     </span>
                     <input type="hidden" name="ex_year_{{ loop.index0 }}" value="{{ p[0] }}">
                     <input type="hidden" name="ex_event_{{ loop.index0 }}" value="{{ p[1] }}">

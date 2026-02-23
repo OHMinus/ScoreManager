@@ -72,7 +72,7 @@
             </div>
             
             <div class="dest-section">
-                <h3 style="margin-top: 0; color: #2c3e50;">📌 登録先の選択</h3>
+                <h3 style="margin-top: 0; color: #2c3e50;">登録先の選択</h3>
                 
                 <div id="existing-profiles-container"></div>
                 
@@ -120,7 +120,7 @@
             <input type="hidden" name="piece" id="hidden_piece" value="{{ piece_guess }}">
             <input type="hidden" name="instrument" id="hidden_inst" value="{{ inst_guess }}">
             
-            <button type="submit" class="update btn-update">🔄 数字を書き換えて順番を更新</button>
+            <button type="submit" class="update btn-update">数字を書き換えて順番を更新</button>
 
             <div class="preview-grid">
                 {% for filename in previews %}
@@ -133,7 +133,7 @@
                     </div>
                 {% endfor %}
             </div>
-            <button type="submit" class="update btn-update">🔄 数字を書き換えて順番を更新</button>
+            <button type="submit" class="update btn-update">数字を書き換えて順番を更新</button>
         </form>
     </div>
 
@@ -166,8 +166,8 @@
                             <input type="radio" name="save_mode" value="existing_${idx}" required>
                             <span style="font-weight: bold; color: #2980b9;">この楽譜にパート/ページを追加・行事を紐付ける</span>
                             <span class="meta-info">
-                                ✍️ 作: ${p.composer || '-'} / 編: ${p.arranger || '-'}<br>
-                                📅 既存の行事: ${ev_str}
+                                作: ${p.composer || '-'} / 編: ${p.arranger || '-'}<br>
+                                既存の行事: ${ev_str}
                             </span>
                             <input type="hidden" name="ex_id_${idx}" value="${p.id}">
                         </label>`;

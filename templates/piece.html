@@ -14,21 +14,28 @@
         
         .inst-card { border: 1px solid #ccc; padding: 15px; border-radius: 8px; margin-bottom: 15px; background: #fafafa; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 15px; }
         .inst-name { font-weight: bold; font-size: 1.2em; min-width: 150px; color: #34495e; }
-        .action-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 0; }
-        .action-form select, .action-form input { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
-        .action-form button { background: #3498db; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        .btn-back { display: inline-block; background: #95a5a6; color: white; padding: 10px 15px; border-radius: 4px; text-decoration: none; margin-bottom: 20px; }
         
+        /* アクションボタン群 */
+        .btn-view { background: #27ae60; color: white; border: none; padding: 10px 15px; border-radius: 4px; text-decoration: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        .btn-view:hover { background: #219653; }
+        .action-form { display: inline-flex; gap: 10px; align-items: center; margin: 0; }
+        .action-form select { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        .btn-dl { color: white; border: none; padding: 9px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .btn-dl.pdf { background: #e74c3c; }
+        .btn-dl.pdf:hover { background: #c0392b; }
+        .btn-dl.zip { background: #8e44ad; }
+        .btn-dl.zip:hover { background: #732d91; }
+
+        .btn-back { display: inline-block; background: #95a5a6; color: white; padding: 10px 15px; border-radius: 4px; text-decoration: none; margin-bottom: 20px; }
         .edit-box { background: #fffde7; border: 1px dashed #f1c40f; padding: 15px; border-radius: 8px; margin-bottom: 25px; }
         .edit-box summary { font-weight: bold; color: #d35400; cursor: pointer; outline: none; }
         .duplicate-box { background: #f0f8ff; border: 1px dashed #3498db; padding: 15px; border-radius: 8px; margin-top: 30px; }
-        
         .flex-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-top: 10px;}
         .flex-row .form-group { flex: 1; min-width: 150px; margin-bottom: 0; }
         .form-group label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 0.9em; }
         .form-group input { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
         .btn-update { background: #f39c12; color: white; border: none; padding: 9px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        .btn-duplicate { background: #27ae60; color: white; border: none; padding: 9px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; white-space: nowrap; }
+        .btn-duplicate { background: #2980b9; color: white; border: none; padding: 9px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -53,11 +60,11 @@
         </div>
         
         <div class="meta-header">
-            ✍️ 作曲: {{ details.composer|default('未登録', true) }} / 編曲: {{ details.arranger|default('未登録', true) }}
+            作曲: {{ details.composer|default('未登録', true) }} / 編曲: {{ details.arranger|default('未登録', true) }}
         </div>
         
         <details class="edit-box">
-            <summary>✏️ 作曲者・編曲者を登録・編集する</summary>
+            <summary>作曲者・編曲者を登録・編集する</summary>
             <form action="{{ url_for('update_piece_info') }}" method="POST">
                 <input type="hidden" name="score_id" value="{{ details.id }}">
                 <div class="flex-row">
@@ -79,29 +86,27 @@
         {% if details.instruments %}
             {% for inst in details.instruments %}
                 <div class="inst-card">
-                    <div class="inst-name">🎼 {{ inst.name }}</div>
+                    <div class="inst-name">{{ inst.name }}</div>
                     
-                    <form action="{{ url_for('output_action') }}" method="POST" class="action-form">
-                        <input type="hidden" name="directory" value="{{ inst.dir }}">
-                        <input type="hidden" name="score_id" value="{{ details.id }}">
-                        <input type="hidden" name="piece" value="{{ details.piece }}">
-                        <input type="hidden" name="instrument" value="{{ inst.name }}">
-                        
-                        <select name="mode">
-                            <option value="booklet">小冊子 (A3)</option>
-                            <option value="2in1">2 in 1 (A3)</option>
-                            <option value="1in1">1 in 1 (A4)</option>
-                        </select>
-                        
-                        <select name="action_type">
-                            <option value="pdf">📄 PDF 保存</option>
-                            <option value="zip">📁 画像ZIP 保存</option>
-                            <option value="print">🖨️ 印刷 (CUPS)</option>
-                        </select>
-                        
-                        <input type="text" name="printer" placeholder="プリンタ指定(任意)" style="width: 140px;">
-                        <button type="submit">実行</button>
-                    </form>
+                    <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                        <a href="{{ url_for('view_score', id=details.id, instrument=inst.name) }}" class="btn-view">楽譜を閲覧・印刷する</a>
+
+                        <form action="{{ url_for('output_action') }}" method="POST" class="action-form">
+                            <input type="hidden" name="directory" value="{{ inst.dir }}">
+                            <input type="hidden" name="score_id" value="{{ details.id }}">
+                            <input type="hidden" name="piece" value="{{ details.piece }}">
+                            <input type="hidden" name="instrument" value="{{ inst.name }}">
+                            
+                            <select name="mode">
+                                <option value="1in1">1 in 1 (A4)</option>
+                                <option value="2in1">2 in 1 (A3)</option>
+                                <option value="booklet">小冊子 (A3)</option>
+                            </select>
+                            
+                            <button type="submit" name="action_type" value="pdf" class="btn-dl pdf">PDF保存</button>
+                            <button type="submit" name="action_type" value="zip" class="btn-dl zip">ZIP保存</button>
+                        </form>
+                    </div>
                 </div>
             {% endfor %}
         {% else %}
@@ -109,7 +114,7 @@
         {% endif %}
 
         <div class="duplicate-box">
-            <h3 style="margin-top: 0; color: #2c3e50; font-size: 1.1em;">🔄 別の演奏会と紐付ける（行事の追加）</h3>
+            <h3 style="margin-top: 0; color: #2c3e50; font-size: 1.1em;">別の演奏会と紐付ける（行事の追加）</h3>
             <p style="color: #666; font-size: 0.9em; margin-top: 0;">※この楽譜を別の行事でも演奏した（する）場合、データ実体を増やさずに行事情報だけをリンクさせることができます。</p>
             <form action="{{ url_for('add_event') }}" method="POST">
                 <input type="hidden" name="score_id" value="{{ details.id }}">
