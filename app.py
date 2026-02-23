@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
 import os
 import glob
 import uuid
@@ -23,8 +23,7 @@ def clear_temp_dir(directory, max_age_hours=1):
     now = time.time()
     for f in glob.glob(os.path.join(directory, '*')):
         try:
-            if os.stat(f).st_mtime < now - max_age_hours * 3600:
-                os.remove(f)
+            if os.stat(f).st_mtime < now - max_age_hours * 3600: os.remove(f)
         except: pass
 
 def extract_info_from_header(image_path):
@@ -41,8 +40,7 @@ def extract_info_from_header(image_path):
         piece_guess = "".join(c for c in piece_guess if c.isalnum() or c in " -_")
         inst_guess = "".join(c for c in inst_guess if c.isalnum() or c in " -_")
         return piece_guess, inst_guess
-    except:
-        return "", ""
+    except: return "", ""
 
 @app.route('/')
 def index():
@@ -52,13 +50,9 @@ def index():
 
 @app.route('/process', methods=['POST'])
 def process_files():
-    if 'files' not in request.files:
-        flash('ファイルが選択されていません。')
-        return redirect(url_for('index'))
+    if 'files' not in request.files: return redirect(url_for('index'))
     files = request.files.getlist('files')
-    if not files or files[0].filename == '':
-        flash('ファイルが選択されていません。')
-        return redirect(url_for('index'))
+    if not files or files[0].filename == '': return redirect(url_for('index'))
 
     clear_temp_dir(TEMP_UPLOAD_DIR)
     clear_temp_dir(TEMP_PREVIEW_DIR)
@@ -80,43 +74,33 @@ def process_files():
                 preview_filenames.append(unique_filename)
                 
         piece_guess, inst_guess = "", ""
-        if first_file_path:
-            piece_guess, inst_guess = extract_info_from_header(first_file_path)
+        if first_file_path: piece_guess, inst_guess = extract_info_from_header(first_file_path)
             
-        piece_names = score_api.get_unique_piece_names()
-        event_names = score_api.get_unique_event_names()
-        current_year = datetime.datetime.now().year
-            
-        return render_template('preview.html', previews=preview_filenames, 
-                               year=current_year, event_name="",
-                               piece_guess=piece_guess, inst_guess=inst_guess,
-                               piece_names=piece_names, event_names=event_names)
+        return render_template('preview.html', previews=preview_filenames, piece_guess=piece_guess, inst_guess=inst_guess,
+                               piece_names=score_api.get_unique_piece_names(), event_names=score_api.get_unique_event_names(),
+                               composers=score_api.get_unique_composers_arrangers()[0], arrangers=score_api.get_unique_composers_arrangers()[1],
+                               current_year=datetime.datetime.now().year)
     except Exception as e:
         flash(f'処理エラー: {str(e)}')
         return redirect(url_for('index'))
-
+    
 @app.route('/scan_ui', methods=['POST'])
 def scan_ui():
-    device_name = request.form.get('device_name', '')
-    return render_template('scan.html', device_name=device_name, scanned_files=[])
+    return render_template('scan.html', device_name=request.form.get('device_name', ''), scanned_files=[])
 
 @app.route('/scan_execute', methods=['POST'])
 def scan_execute():
     device_name = request.form.get('device_name', '')
     scanned_files = request.form.getlist('scanned_files[]')
-    
     try:
         temp_scan_path = os.path.join(TEMP_UPLOAD_DIR, f"scanned_{uuid.uuid4().hex}.png")
         score_api.scan_score_from_epson(temp_scan_path, dpi=score_api.DEFAULT_CONFIG['dpi'], device_name=device_name if device_name else None)
-        
         pages = score_api.process_file_to_1in1(temp_scan_path, score_api.DEFAULT_CONFIG)
-        
         for page in pages:
             unique_filename = f"{uuid.uuid4().hex}.png"
             preview_path = os.path.join(TEMP_PREVIEW_DIR, unique_filename)
             page.save(preview_path, optimize=True)
             scanned_files.append(unique_filename)
-            
         return render_template('scan.html', device_name=device_name, scanned_files=scanned_files)
     except Exception as e:
         flash(f'スキャンエラー: {str(e)}')
@@ -125,62 +109,70 @@ def scan_execute():
 @app.route('/scan_to_preview', methods=['POST'])
 def scan_to_preview():
     scanned_files = request.form.getlist('scanned_files[]')
-
-    if not scanned_files:
-        flash('スキャンされた画像がありません。')
-        return redirect(url_for('index'))
-
+    if not scanned_files: return redirect(url_for('index'))
     first_file_path = os.path.join(TEMP_PREVIEW_DIR, scanned_files[0])
     piece_guess, inst_guess = extract_info_from_header(first_file_path)
     
-    piece_names = score_api.get_unique_piece_names()
-    event_names = score_api.get_unique_event_names()
-    current_year = datetime.datetime.now().year
-
-    return render_template('preview.html', previews=scanned_files, 
-                           year=current_year, event_name="",
-                           piece_guess=piece_guess, inst_guess=inst_guess,
-                           piece_names=piece_names, event_names=event_names)
+    return render_template('preview.html', previews=scanned_files, piece_guess=piece_guess, inst_guess=inst_guess,
+                           piece_names=score_api.get_unique_piece_names(), event_names=score_api.get_unique_event_names(),
+                           composers=score_api.get_unique_composers_arrangers()[0], arrangers=score_api.get_unique_composers_arrangers()[1],
+                           current_year=datetime.datetime.now().year)
 
 @app.route('/update_order', methods=['POST'])
 def update_order():
-    year = request.form.get('year', datetime.datetime.now().year)
-    event_name = request.form.get('event_name', '')
     piece = request.form.get('piece', '')
     instrument = request.form.get('instrument', '')
     filenames = request.form.getlist('filenames[]')
     orders = request.form.getlist('orders[]')
-    
-    piece_names = score_api.get_unique_piece_names()
-    event_names = score_api.get_unique_event_names()
-    
     try:
         paired = [(int(o), f) for f, o in zip(filenames, orders)]
         paired.sort(key=lambda x: x[0])
         sorted_filenames = [f for _, f in paired]
         flash('ページの順番を更新しました。')
-        return render_template('preview.html', previews=sorted_filenames, year=year, event_name=event_name, piece_guess=piece, inst_guess=instrument, piece_names=piece_names, event_names=event_names)
+        return render_template('preview.html', previews=sorted_filenames, piece_guess=piece, inst_guess=instrument,
+                               piece_names=score_api.get_unique_piece_names(), event_names=score_api.get_unique_event_names(),
+                               composers=score_api.get_unique_composers_arrangers()[0], arrangers=score_api.get_unique_composers_arrangers()[1],
+                               current_year=datetime.datetime.now().year)
     except ValueError:
         flash('順序には数値を入力してください。')
-        return render_template('preview.html', previews=filenames, year=year, event_name=event_name, piece_guess=piece, inst_guess=instrument, piece_names=piece_names, event_names=event_names)
+        return render_template('preview.html', previews=filenames, piece_guess=piece, inst_guess=instrument,
+                               piece_names=score_api.get_unique_piece_names(), event_names=score_api.get_unique_event_names(),
+                               composers=score_api.get_unique_composers_arrangers()[0], arrangers=score_api.get_unique_composers_arrangers()[1],
+                               current_year=datetime.datetime.now().year)
+
+@app.route('/api/get_profiles')
+def api_get_profiles():
+    piece = request.args.get('piece', '')
+    return jsonify(score_api.get_profiles_by_piece(piece))
 
 @app.route('/save', methods=['POST'])
 def save_score():
-    year = request.form.get('year')
-    event_name = request.form.get('event_name')
     piece = request.form.get('piece')
     instrument = request.form.get('instrument')
+    year = request.form.get('year')
+    event_name = request.form.get('event_name')
     preview_filenames = request.form.getlist('previews')
-    
-    if not piece or not instrument or not event_name or not year:
-        flash('年度、演奏会名、楽曲名、楽器名をすべて入力してください。')
-        piece_names = score_api.get_unique_piece_names()
-        event_names = score_api.get_unique_event_names()
-        return render_template('preview.html', previews=preview_filenames, year=year, event_name=event_name, piece_guess=piece, inst_guess=instrument, piece_names=piece_names, event_names=event_names, error="必須項目です")
+    save_mode = request.form.get('save_mode')
+
+    if not save_mode or not piece or not instrument or not year or not event_name:
+        flash('必須項目が入力されていません。')
+        return redirect(url_for('index'))
+
+    score_id = None
+    composer = ""
+    arranger = ""
+
+    if save_mode == 'new':
+        composer = request.form.get('new_composer', '')
+        arranger = request.form.get('new_arranger', '')
+    elif save_mode.startswith('existing_'):
+        idx = save_mode.split('_')[1]
+        score_id = request.form.get(f'ex_id_{idx}')
+
     try:
         pages = [Image.open(os.path.join(TEMP_PREVIEW_DIR, fname)) for fname in preview_filenames]
-        saved_dir = score_api.save_and_register_score(pages, year, event_name, piece, instrument)
-        flash(f'登録が完了しました！ [ 保存先: {saved_dir} ]')
+        saved_dir = score_api.save_and_register_score(pages, year, event_name, piece, composer, arranger, instrument, score_id=score_id)
+        flash(f'「{piece}」({instrument}) の登録・追加が完了しました！')
         return redirect(url_for('index'))
     except Exception as e:
         flash(f'保存エラー: {str(e)}')
@@ -188,26 +180,62 @@ def save_score():
 
 @app.route('/list')
 def score_list():
-    grouped_data = score_api.get_all_scores_grouped()
-    return render_template('list.html', grouped_data=grouped_data)
+    sort_by = request.args.get('sort', 'event')
+    if sort_by == 'piece': 
+        pieces_list = score_api.get_all_scores_by_piece()
+        return render_template('list.html', pieces_list=pieces_list, sort_by=sort_by)
+    else: 
+        grouped_data = score_api.get_all_scores_grouped()
+        return render_template('list.html', grouped_data=grouped_data, sort_by=sort_by)
 
 @app.route('/search', methods=['GET'])
 def search_score():
     keyword = request.args.get('keyword', '')
-    if not keyword:
-        flash('検索キーワードを入力してください。')
-        return redirect(url_for('index'))
+    if not keyword: return redirect(url_for('index'))
     results = score_api.search_pieces_by_keyword(keyword)
     return render_template('list.html', search_results=results, keyword=keyword)
 
 @app.route('/piece')
 def piece_details():
-    year = request.args.get('year')
-    event_name = request.args.get('event_name')
-    piece = request.args.get('piece')
-    if not year or not event_name or not piece: return redirect(url_for('score_list'))
-    instruments = score_api.get_piece_details(year, event_name, piece)
-    return render_template('piece.html', year=year, event_name=event_name, piece=piece, instruments=instruments)
+    score_id = request.args.get('id', '').strip()
+    if not score_id: return redirect(url_for('score_list'))
+    
+    details = score_api.get_piece_details(score_id)
+    if not details: 
+        flash(f'システムエラー: 楽譜データが見つかりませんでした。')
+        return redirect(url_for('score_list'))
+    
+    return render_template('piece.html', details=details, event_names=score_api.get_unique_event_names(), current_year=datetime.datetime.now().year)
+
+@app.route('/update_piece_info', methods=['POST'])
+def update_piece_info():
+    score_id = request.form.get('score_id')
+    composer = request.form.get('composer', '')
+    arranger = request.form.get('arranger', '')
+    success = score_api.update_composer_arranger(score_id, composer, arranger)
+    if success: flash('📝 作曲者・編曲者の情報を更新しました。')
+    else: flash('エラー: 情報の更新に失敗しました。')
+    return redirect(url_for('piece_details', id=score_id))
+
+@app.route('/add_event', methods=['POST'])
+def add_event():
+    score_id = request.form.get('score_id')
+    dest_year = request.form.get('dest_year')
+    dest_event = request.form.get('dest_event')
+
+    if not dest_year or not dest_event:
+        flash('追加先の年度と演奏会名を入力してください。')
+        return redirect(url_for('piece_details', id=score_id))
+    try:
+        success = score_api.add_event_to_score(score_id, dest_year, dest_event)
+        if success:
+            flash(f'この楽譜を {dest_year}{dest_event} の行事に追加（リンク）しました！')
+        else:
+            flash('共有元のデータが見つかりませんでした。')
+        return redirect(url_for('piece_details', id=score_id))
+    except Exception as e:
+        flash(f'処理中にエラーが発生しました: {str(e)}')
+        return redirect(url_for('piece_details', id=score_id))
 
 @app.route('/output_action', methods=['POST'])
 def output_action():
@@ -215,19 +243,18 @@ def output_action():
     mode = request.form.get('mode')
     action_type = request.form.get('action_type')
     printer = request.form.get('printer', '')
-    year = request.form.get('year', '')
-    event_name = request.form.get('event_name', '')
+    score_id = request.form.get('score_id')
     piece = request.form.get('piece', 'score')
     inst = request.form.get('instrument', 'inst')
 
     if not directory or not os.path.exists(directory):
         flash('エラー: 指定されたデータが見つかりません。')
-        return redirect(url_for('piece_details', year=year, event_name=event_name, piece=piece))
+        return redirect(url_for('piece_details', id=score_id))
     try:
         if action_type == 'print':
             score_api.layout_and_print_score(directory=directory, mode=mode, orientation=score_api.DEFAULT_CONFIG['page_orientation'], printer_name=printer if printer else None, dpi=score_api.DEFAULT_CONFIG['dpi'])
             flash(f'[{piece} - {inst}] の印刷ジョブを送信しました！')
-            return redirect(url_for('piece_details', year=year, event_name=event_name, piece=piece))
+            return redirect(url_for('piece_details', id=score_id))
             
         output_pages = score_api.apply_layout(directory=directory, mode=mode, orientation=score_api.DEFAULT_CONFIG['page_orientation'], booklet_dir=score_api.DEFAULT_CONFIG['booklet_direction'], dpi=score_api.DEFAULT_CONFIG['dpi'])
         safe_filename = f"{piece}_{inst}_{mode}".replace(' ', '_')
@@ -248,7 +275,7 @@ def output_action():
             return send_file(zip_io, as_attachment=True, download_name=f"{safe_filename}.zip", mimetype='application/zip')
     except Exception as e:
         flash(f'出力エラー: {str(e)}')
-        return redirect(url_for('piece_details', year=year, event_name=event_name, piece=piece))
+        return redirect(url_for('piece_details', id=score_id))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

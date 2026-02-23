@@ -3,19 +3,32 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ piece }} - 楽譜詳細</title>
+    <title>{{ details.piece }} - 楽譜詳細</title>
     <style>
         body { font-family: sans-serif; background: #f4f4f9; padding: 20px; color: #333; }
         .container { max-width: 900px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
         .flash-message { background: #d4edda; color: #155724; padding: 10px; border-radius: 4px; margin-bottom: 20px; }
         h1 { color: #2c3e50; margin-bottom: 5px; }
-        .event-badge { background: #e67e22; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.9em; vertical-align: middle; }
+        .meta-header { color: #555; margin-bottom: 15px; font-size: 1.1em; }
+        .event-badge { display: inline-block; background: #e67e22; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.9em; margin-right: 5px; margin-bottom: 5px; }
+        
         .inst-card { border: 1px solid #ccc; padding: 15px; border-radius: 8px; margin-bottom: 15px; background: #fafafa; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 15px; }
         .inst-name { font-weight: bold; font-size: 1.2em; min-width: 150px; color: #34495e; }
         .action-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 0; }
         .action-form select, .action-form input { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
         .action-form button { background: #3498db; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
         .btn-back { display: inline-block; background: #95a5a6; color: white; padding: 10px 15px; border-radius: 4px; text-decoration: none; margin-bottom: 20px; }
+        
+        .edit-box { background: #fffde7; border: 1px dashed #f1c40f; padding: 15px; border-radius: 8px; margin-bottom: 25px; }
+        .edit-box summary { font-weight: bold; color: #d35400; cursor: pointer; outline: none; }
+        .duplicate-box { background: #f0f8ff; border: 1px dashed #3498db; padding: 15px; border-radius: 8px; margin-top: 30px; }
+        
+        .flex-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-top: 10px;}
+        .flex-row .form-group { flex: 1; min-width: 150px; margin-bottom: 0; }
+        .form-group label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 0.9em; }
+        .form-group input { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+        .btn-update { background: #f39c12; color: white; border: none; padding: 9px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .btn-duplicate { background: #27ae60; color: white; border: none; padding: 9px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -32,19 +45,46 @@
           {% endif %}
         {% endwith %}
 
-        <h1>{{ piece }} <span class="event-badge">{{ year }}{{ event_name }}</span></h1>
+        <h1>{{ details.piece }}</h1>
+        <div style="margin-bottom: 10px;">
+            {% for e in details.events %}
+                <span class="event-badge">{{ e.year }}{{ e.event_name }}</span>
+            {% endfor %}
+        </div>
+        
+        <div class="meta-header">
+            ✍️ 作曲: {{ details.composer|default('未登録', true) }} / 編曲: {{ details.arranger|default('未登録', true) }}
+        </div>
+        
+        <details class="edit-box">
+            <summary>✏️ 作曲者・編曲者を登録・編集する</summary>
+            <form action="{{ url_for('update_piece_info') }}" method="POST">
+                <input type="hidden" name="score_id" value="{{ details.id }}">
+                <div class="flex-row">
+                    <div class="form-group">
+                        <label for="composer">作曲者 (Composer):</label>
+                        <input type="text" id="composer" name="composer" value="{{ details.composer }}">
+                    </div>
+                    <div class="form-group">
+                        <label for="arranger">編曲者 (Arranger):</label>
+                        <input type="text" id="arranger" name="arranger" value="{{ details.arranger }}">
+                    </div>
+                    <button type="submit" class="btn-update">保存</button>
+                </div>
+            </form>
+        </details>
+
         <hr style="margin-bottom: 20px;">
 
-        {% if instruments %}
-            {% for inst in instruments %}
+        {% if details.instruments %}
+            {% for inst in details.instruments %}
                 <div class="inst-card">
                     <div class="inst-name">🎼 {{ inst.name }}</div>
                     
                     <form action="{{ url_for('output_action') }}" method="POST" class="action-form">
                         <input type="hidden" name="directory" value="{{ inst.dir }}">
-                        <input type="hidden" name="year" value="{{ year }}">
-                        <input type="hidden" name="event_name" value="{{ event_name }}">
-                        <input type="hidden" name="piece" value="{{ piece }}">
+                        <input type="hidden" name="score_id" value="{{ details.id }}">
+                        <input type="hidden" name="piece" value="{{ details.piece }}">
                         <input type="hidden" name="instrument" value="{{ inst.name }}">
                         
                         <select name="mode">
@@ -67,6 +107,29 @@
         {% else %}
             <p>この楽曲のパートデータは見つかりませんでした。</p>
         {% endif %}
+
+        <div class="duplicate-box">
+            <h3 style="margin-top: 0; color: #2c3e50; font-size: 1.1em;">🔄 別の演奏会と紐付ける（行事の追加）</h3>
+            <p style="color: #666; font-size: 0.9em; margin-top: 0;">※この楽譜を別の行事でも演奏した（する）場合、データ実体を増やさずに行事情報だけをリンクさせることができます。</p>
+            <form action="{{ url_for('add_event') }}" method="POST">
+                <input type="hidden" name="score_id" value="{{ details.id }}">
+                <div class="flex-row">
+                    <div class="form-group" style="flex: 0.3;">
+                        <label for="dest_year">追加先の年度:</label>
+                        <input type="number" id="dest_year" name="dest_year" value="{{ current_year }}" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="dest_event">追加先の演奏会名:</label>
+                        <input type="text" id="dest_event" name="dest_event" list="event-list" placeholder="例: 定期演奏会" required autocomplete="off">
+                        <datalist id="event-list">
+                            {% for name in event_names %} <option value="{{ name }}"></option> {% endfor %}
+                        </datalist>
+                    </div>
+                    <button type="submit" class="btn-duplicate">＋ 別の行事に追加</button>
+                </div>
+            </form>
+        </div>
+
     </div>
 </body>
 </html>

@@ -219,3 +219,4 @@ __marimo__/
 static/temp
 scores_db.csv
 score_data
+scores_db.json

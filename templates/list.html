@@ -7,28 +7,52 @@
     <style>
         body { font-family: sans-serif; background: #f4f4f9; padding: 20px; color: #333; }
         .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        h1 { border-bottom: 2px solid #2c3e50; padding-bottom: 5px; }
+        h1 { border-bottom: 2px solid #2c3e50; padding-bottom: 5px; margin-bottom: 20px; }
+        .tabs { display: flex; margin-bottom: 20px; border-bottom: 2px solid #2c3e50; }
+        .tab { flex: 1; text-align: center; padding: 12px; background: #e9ecef; color: #555; text-decoration: none; font-weight: bold; border-radius: 8px 8px 0 0; margin-right: 5px; transition: background 0.2s; }
+        .tab:last-child { margin-right: 0; }
+        .tab.active { background: #2c3e50; color: white; }
+        .tab:hover:not(.active) { background: #d1d8e0; }
+        
         .event-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 20px; background: #fafafa; }
         .event-title { margin-top: 0; color: #e67e22; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+        
         ul { list-style-type: none; padding-left: 0; }
         li { margin-bottom: 10px; }
-        a { text-decoration: none; color: #3498db; font-size: 1.1em; font-weight: bold; display: block; padding: 10px; border-radius: 4px; background: white; border: 1px solid #eee; transition: background 0.2s; }
-        a:hover { background: #eef2f5; color: #2980b9; }
+        a.list-item { text-decoration: none; color: #2c3e50; font-size: 1.1em; font-weight: bold; display: block; padding: 10px; border-radius: 4px; background: white; border: 1px solid #eee; transition: background 0.2s; }
+        a.list-item:hover { background: #eef2f5; color: #2980b9; }
+        .meta-text { font-size: 0.8em; color: #7f8c8d; font-weight: normal; margin-left: 8px; }
         .btn-back { display: inline-block; background: #95a5a6; color: white; padding: 10px 15px; border-radius: 4px; text-decoration: none; margin-bottom: 20px; }
+
+        /* 曲名順モード用の専用スタイル */
+        .piece-title { margin-top: 0; margin-bottom: 8px; font-size: 1.3em; }
+        .piece-link { text-decoration: none; color: #3498db; transition: color 0.2s; }
+        .piece-link:hover { color: #2980b9; text-decoration: underline; }
+        .info-box { margin-left: 30px; font-size: 0.95em; color: #555; }
+        .history-tag { color: #e67e22; font-weight: bold; background: #fdf2e9; padding: 2px 6px; border-radius: 4px; border: 1px solid #f8c471; margin-right: 5px; display: inline-block; margin-top: 5px;}
     </style>
 </head>
 <body>
     <div class="container">
         <a href="{{ url_for('index') }}" class="btn-back">◀ トップへ戻る</a>
 
-        {% if keyword is defined %}
+        {% if keyword is defined and keyword != "" %}
             <h1>「{{ keyword }}」の検索結果</h1>
             {% if search_results %}
                 <ul>
-                {% for y, ev, pi in search_results %}
+                {% for item in search_results %}
                     <li>
-                        <a href="{{ url_for('piece_details', year=y, event_name=ev, piece=pi) }}">
-                            {{ pi }} <span style="font-size:0.8em; color:#7f8c8d;">(行事: {{ y }}{{ ev }})</span>
+                        <a href="{{ url_for('piece_details', id=item.id) }}" class="list-item">
+                            🎵 {{ item.piece }} 
+                            {% if item.composer or item.arranger %}
+                                <span class="meta-text">(作: {{ item.composer|default('-') }} / 編: {{ item.arranger|default('-') }})</span>
+                            {% endif %}
+                            <br>
+                            <div style="margin-left: 8px; margin-top: 5px;">
+                                {% for ev in item.events %}
+                                    <span class="history-tag">{{ ev.year }}{{ ev.event_name }}</span>
+                                {% endfor %}
+                            </div>
                         </a>
                     </li>
                 {% endfor %}
@@ -39,17 +63,61 @@
             
         {% else %}
             <h1>登録済みの楽譜一覧</h1>
-            {% if grouped_data %}
+            
+            <div class="tabs">
+                <a href="{{ url_for('score_list', sort='event') }}" class="tab {% if sort_by == 'event' %}active{% endif %}">📅 行事別で見る</a>
+                <a href="{{ url_for('score_list', sort='piece') }}" class="tab {% if sort_by == 'piece' %}active{% endif %}">🎵 曲名順 (あいうえお順) で見る</a>
+            </div>
+
+            {% if sort_by == 'event' and grouped_data %}
                 {% for key, pieces in grouped_data.items() %}
                     <div class="event-card">
                         <h3 class="event-title">📅 {{ key[0] }}{{ key[1] }}</h3>
                         <ul>
-                        {% for pi in pieces %}
-                            <li><a href="{{ url_for('piece_details', year=key[0], event_name=key[1], piece=pi) }}">🎵 {{ pi }}</a></li>
+                        {% for item in pieces %}
+                            <li>
+                                <a href="{{ url_for('piece_details', id=item.id) }}" class="list-item">
+                                    🎵 {{ item.piece }}
+                                    {% if item.composer or item.arranger %}
+                                        <span class="meta-text">(作: {{ item.composer|default('-') }} / 編: {{ item.arranger|default('-') }})</span>
+                                    {% endif %}
+                                </a>
+                            </li>
                         {% endfor %}
                         </ul>
                     </div>
                 {% endfor %}
+
+            {% elif sort_by == 'piece' and pieces_list %}
+                {% for item in pieces_list %}
+                    <div class="event-card">
+                        <h3 class="piece-title">
+                            <a href="{{ url_for('piece_details', id=item.id) }}" class="piece-link">
+                                🎵 {{ item.piece }}
+                            </a>
+                        </h3>
+                        
+                        <div class="info-box">
+                            {% if item.composer or item.arranger %}
+                                <div style="margin-bottom: 5px;">
+                                    ✍️ 作: <strong>{{ item.composer|default('-') }}</strong> / 編: <strong>{{ item.arranger|default('-') }}</strong>
+                                </div>
+                            {% endif %}
+                            
+                            <div>
+                                📅 採用履歴: 
+                                {% for ev in item.events[:4] %}
+                                    <span class="history-tag">{{ ev.year }}{{ ev.event_name }}</span>
+                                {% endfor %}
+                                
+                                {% if item.events|length > 4 %}
+                                    <span style="color: #999; font-size: 0.9em; margin-left: 5px;">...他 {{ item.events|length - 4 }} 件</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                {% endfor %}
+
             {% else %}
                 <p>登録されている楽譜がありません。</p>
             {% endif %}
