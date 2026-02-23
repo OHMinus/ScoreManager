@@ -1,0 +1,23 @@
+{
+  "name": "scoremanager",
+  "version": "1.0.0",
+  "description": "楽譜をきれいにPDF化するための補助アプリケーションです",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron . --no-sandbox"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OHMinus/ScoreManager.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/OHMinus/ScoreManager/issues"
+  },
+  "homepage": "https://github.com/OHMinus/ScoreManager#readme",
+  "devDependencies": {
+    "electron": "^40.6.0"
+  }
+}
