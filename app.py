@@ -331,5 +331,31 @@ def debug_view():
     filenames = [os.path.basename(f) for f in debug_files]
     return render_template('debug.html', debug_images=filenames)
 
+@app.route('/rotate_image', methods=['POST'])
+def rotate_image():
+    filename = request.form.get('filename')
+    direction = request.form.get('direction')
+    
+    if not filename or not direction:
+        return jsonify({'success': False, 'error': 'パラメータが不足しています'}), 400
+        
+    filepath = os.path.join(TEMP_PREVIEW_DIR, filename)
+    if not os.path.exists(filepath):
+        return jsonify({'success': False, 'error': 'ファイルが見つかりません'}), 404
+        
+    try:
+        img = Image.open(filepath)
+        if direction == 'left':
+            img = img.transpose(Image.ROTATE_90)
+        elif direction == 'right':
+            img = img.transpose(Image.ROTATE_270)
+        elif direction == '180':
+            img = img.transpose(Image.ROTATE_180)
+            
+        img.save(filepath, optimize=True)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

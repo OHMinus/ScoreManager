@@ -60,62 +60,68 @@ def ensure_horizontal(cv_img):
 def ensure_upright(cv_img, return_debug=False):
     """
     【Split後処理】
-    単一ページに対して「左重みの法則」を適用し、
-    右側が重い場合は逆さま(180度)と判定して補正する。
+    黒点（インク）の密度を用いて上下を判定する。
+    楽譜は左側に音部記号や調号が集中するため、左側の黒ピクセル密度が必ず高くなる法則を利用。
     """
-    print("--- [DEBUG] 上下判定(180度)を開始 ---")
+    print("--- [DEBUG] 上下判定(黒点密度比較)を開始 ---")
+    
+    # 処理高速化のため画像を縮小
     scale = 800.0 / max(cv_img.shape[0], cv_img.shape[1])
     small = cv2.resize(cv_img, (int(cv_img.shape[1] * scale), int(cv_img.shape[0] * scale)))
     gray = small if len(small.shape) == 2 else cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    
+    # インクを白(255)、背景を黒(0)として二値化
     _, thresh = cv2.threshold(gray, 128, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
     
-    # 余白を切り落とし、楽譜の「コンテンツ部分」だけを抽出
+    # 余白を切り落としてコンテンツ部分(インクがある領域)だけにする
     coords = cv2.findNonZero(thresh)
     if coords is not None:
         x, y, w, h = cv2.boundingRect(coords)
         content = thresh[y:y+h, x:x+w]
     else:
         content = thresh
-        w = content.shape[1]
+        h, w = content.shape
         
-    # コンテンツ内の「縦線（音部記号・括弧・小節線）」だけを抽出
-    v_k = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 15))
-    verticals = cv2.morphologyEx(content, cv2.MORPH_OPEN, v_k)
+    # 左側20% と 右側20% のエリアを定義
+    margin = max(10, int(w * 0.20))
     
-    # 左端 15% と 右端 15% のインク（縦線）密度を比較
-    margin = max(10, int(w * 0.15))
-    left_density = np.sum(verticals[:, :margin])
-    right_density = np.sum(verticals[:, -margin:])
+    # 「黒点（インク）の密度（白ピクセルの総数）」を単純にカウント
+    left_ink = np.sum(content[:, :margin]) / 255
+    right_ink = np.sum(content[:, -margin:]) / 255
     
-    print(f"[DEBUG] 左端インク量: {left_density:.0f} | 右端インク量: {right_density:.0f}")
+    print(f"[DEBUG] 左側のインク量: {left_ink:.0f} | 右側のインク量: {right_ink:.0f}")
     
     is_upside_down = False
-    if right_density > left_density * 1.1:
+    # 右側のインク量が左側よりも多ければ、逆さま（180度反転）とみなす
+    if right_ink > left_ink * 1.05: # ノイズを考慮して5%のバッファを持たせる
         is_upside_down = True
-        print("[DEBUG] -> 右側の方が重いため、逆さま(180度反転)と判断しました。\n")
+        print("[DEBUG] -> 右側の黒点密度が高いため、逆さま(180度反転)と判断しました。\n")
         res_img = cv2.rotate(cv_img, cv2.ROTATE_180)
     else:
-        print("[DEBUG] -> 左側の方が重いため、正位置と判断しました。\n")
+        print("[DEBUG] -> 左側の黒点密度が高いため、正位置と判断しました。\n")
         res_img = cv_img
         
-    # デバッグ描画
+    # デバッグ用の画像出力
     if return_debug:
-        debug_bg = cv2.bitwise_not(verticals)
+        debug_bg = cv2.bitwise_not(content) # 見やすいように白背景・黒インクに反転
         debug_color = cv2.cvtColor(debug_bg, cv2.COLOR_GRAY2BGR)
+        
+        # 比較したエリアをハイライト
         overlay = debug_color.copy()
-        cv2.rectangle(overlay, (0, 0), (margin, content.shape[0]), (255, 0, 0), -1)  # 青(左)
-        cv2.rectangle(overlay, (content.shape[1] - margin, 0), (content.shape[1], content.shape[0]), (0, 0, 255), -1) # 赤(右)
+        cv2.rectangle(overlay, (0, 0), (margin, h), (255, 0, 0), -1)  # 青(左)
+        cv2.rectangle(overlay, (w - margin, 0), (w, h), (0, 0, 255), -1) # 赤(右)
         cv2.addWeighted(overlay, 0.2, debug_color, 0.8, 0, debug_color)
         
-        cv2.putText(debug_color, f"LEFT: {left_density:.0f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 0, 0), 2)
-        (tw, _), _ = cv2.getTextSize(f"RIGHT: {right_density:.0f}", cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-        cv2.putText(debug_color, f"RIGHT: {right_density:.0f}", (content.shape[1] - margin - tw - 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 200), 2)
+        # スコアを描画
+        cv2.putText(debug_color, f"L_INK: {left_ink:.0f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 0, 0), 2)
+        (tw, _), _ = cv2.getTextSize(f"R_INK: {right_ink:.0f}", cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+        cv2.putText(debug_color, f"R_INK: {right_ink:.0f}", (w - margin - tw - 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 200), 2)
         
         res_text = "ROTATED 180" if is_upside_down else "UPRIGHT (OK)"
         color = (0, 0, 255) if is_upside_down else (0, 255, 0)
         (tw, th), _ = cv2.getTextSize(res_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 3)
-        cv2.rectangle(debug_color, (content.shape[1]//2 - tw//2 - 10, 10), (content.shape[1]//2 + tw//2 + 10, 20 + th + 10), (0, 0, 0), -1)
-        cv2.putText(debug_color, res_text, (content.shape[1]//2 - tw//2, 20 + th), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 3)
+        cv2.rectangle(debug_color, (w//2 - tw//2 - 10, 10), (w//2 + tw//2 + 10, 20 + th + 10), (0, 0, 0), -1)
+        cv2.putText(debug_color, res_text, (w//2 - tw//2, 20 + th), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 3)
         
         return res_img, debug_color
         
