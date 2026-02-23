@@ -4,23 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Score Processor</title>
-    <style>
-        body { font-family: sans-serif; background: #f4f4f9; padding: 20px; color: #333; }
-        .container { max-width: 600px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        .flash-message { background: #d1ecf1; color: #0c5460; padding: 10px; border-radius: 4px; margin-bottom: 20px; }
-        h2 { border-bottom: 2px solid #2c3e50; padding-bottom: 5px; margin-top: 30px; }
-        .form-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input[type="text"], input[type="file"] { width: 100%; padding: 10px; box-sizing: border-box; }
-        button, .btn-link { display: inline-block; background: #3498db; color: white; border: none; padding: 12px 15px; font-size: 16px; cursor: pointer; width: 100%; border-radius: 4px; text-align: center; text-decoration: none; box-sizing: border-box; }
-        button:hover, .btn-link:hover { background: #2980b9; }
-        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 10px auto; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        #loading-overlay { display: none; text-align: center; padding: 15px; background: #e9ecef; border-radius: 4px; margin-top: 15px;}
-        .action-box { background: #fafafa; border: 1px solid #ddd; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
-    </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
-<body>
+<body class="page-index">
     <div class="container">
         <h1>Score Processor</h1>
         
@@ -35,7 +21,7 @@
         {% endwith %}
 
         <h2>1. 楽譜の取り込み</h2>
-        <form method="POST" enctype="multipart/form-data" onsubmit="showLoading()">
+        <form method="POST" enctype="multipart/form-data">
             
             <div class="action-box">
                 <label for="files">【方法A】画像ファイルから登録:</label>
@@ -66,12 +52,6 @@
         <a href="{{ url_for('score_list') }}" class="btn-link" style="background: #e67e22;">登録されているすべての楽譜一覧を見る</a>
     </div>
 
-    <script>
-        function showLoading() {
-            document.getElementById('btn-process').style.display = 'none';
-            document.getElementById('btn-scan').style.display = 'none';
-            document.getElementById('loading-overlay').style.display = 'block';
-        }
-    </script>
+    <script src="{{ url_for('static', filename='js/ui.js') }}"></script>
 </body>
 </html>
