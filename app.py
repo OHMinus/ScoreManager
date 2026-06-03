@@ -224,11 +224,18 @@ def view_score():
     if not details: return redirect(url_for('score_list'))
     
     target_dir = None
+    urls = None
     for inst in details['instruments']:
         if inst['name'] == instrument:
-            target_dir = inst['dir']
+            if 'urls' in inst:
+                urls = inst['urls']
+            else:
+                target_dir = inst['dir']
             break
             
+    if urls is not None:
+         return render_template('view_score.html', details=details, instrument=instrument, urls=urls)
+
     if not target_dir: return redirect(url_for('piece_details', id=score_id))
     
     image_files = sorted(glob.glob(os.path.join(target_dir, "*.png")))
@@ -292,18 +299,26 @@ def output_action():
     piece = request.form.get('piece', 'score')
     inst = request.form.get('instrument', 'inst')
 
-    if not directory or not os.path.exists(directory):
+    urls = None
+    details = score_api.get_piece_details(score_id)
+    if details:
+         for instrument_dict in details['instruments']:
+              if instrument_dict['name'] == inst and 'urls' in instrument_dict:
+                   urls = instrument_dict['urls']
+                   break
+
+    if not urls and (not directory or not os.path.exists(directory)):
         flash('エラー: 指定されたデータが見つかりません。')
         return redirect(url_for('piece_details', id=score_id))
     try:
         if action_type == 'print':
-            score_api.layout_and_print_score(directory=directory, mode=mode, orientation=score_api.DEFAULT_CONFIG['page_orientation'], printer_name=printer if printer else None, dpi=score_api.DEFAULT_CONFIG['dpi'])
+            score_api.layout_and_print_score(directory=directory, mode=mode, orientation=score_api.DEFAULT_CONFIG['page_orientation'], printer_name=printer if printer else None, dpi=score_api.DEFAULT_CONFIG['dpi'], urls=urls)
             flash(f'[{piece} - {inst}] の印刷ジョブを送信しました！')
             if request.form.get('from_view'):
                 return redirect(url_for('view_score', id=score_id, instrument=inst))
             return redirect(url_for('piece_details', id=score_id))
             
-        output_pages = score_api.apply_layout(directory=directory, mode=mode, orientation=score_api.DEFAULT_CONFIG['page_orientation'], booklet_dir=score_api.DEFAULT_CONFIG['booklet_direction'], dpi=score_api.DEFAULT_CONFIG['dpi'])
+        output_pages = score_api.apply_layout(directory=directory, mode=mode, orientation=score_api.DEFAULT_CONFIG['page_orientation'], booklet_dir=score_api.DEFAULT_CONFIG['booklet_direction'], dpi=score_api.DEFAULT_CONFIG['dpi'], urls=urls)
         safe_filename = f"{piece}_{inst}_{mode}".replace(' ', '_')
         
         if action_type == 'pdf':

@@ -36,7 +36,7 @@
 
         <h1>{{ details.piece }}</h1>
         <h2 style="text-align: center; color: #34495e; margin-top: 0;">🎼 {{ instrument }}</h2>
-        <p style="text-align: center; color: #666;">全 {{ filenames|length }} ページ</p>
+        <p style="text-align: center; color: #666;">全 {% if urls %}{{ urls|length }}{% else %}{{ filenames|length }}{% endif %} ページ</p>
 
         <form action="{{ url_for('output_action') }}" method="POST" class="print-box">
             <h3 style="margin: 0; color: #2980b9; display: flex; align-items: center;">🖨️ 印刷指示</h3>
@@ -64,12 +64,21 @@
         <hr style="margin-bottom: 30px;">
 
         <div class="score-grid">
-            {% for filename in filenames %}
-                <div>
-                    <h4 style="color:#7f8c8d; text-align:center; margin-bottom:8px;">Page {{ loop.index }}</h4>
-                    <img src="{{ url_for('score_image', score_id=details.id, instrument=instrument, filename=filename) }}" class="score-page" loading="lazy">
-                </div>
-            {% endfor %}
+            {% if urls %}
+                {% for url in urls %}
+                    <div>
+                        <h4 style="color:#7f8c8d; text-align:center; margin-bottom:8px;">Page {{ loop.index }}</h4>
+                        <img src="{{ url }}" class="score-page" loading="lazy">
+                    </div>
+                {% endfor %}
+            {% else %}
+                {% for filename in filenames %}
+                    <div>
+                        <h4 style="color:#7f8c8d; text-align:center; margin-bottom:8px;">Page {{ loop.index }}</h4>
+                        <img src="{{ url_for('score_image', score_id=details.id, instrument=instrument, filename=filename) }}" class="score-page" loading="lazy">
+                    </div>
+                {% endfor %}
+            {% endif %}
         </div>
         
         <div style="text-align: center; margin-top: 40px;">
