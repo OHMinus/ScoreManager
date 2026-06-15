@@ -1,6 +1,7 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, session
 import os
 import glob
+from google_auth_oauthlib.flow import Flow
 import uuid
 import datetime
 import time
@@ -29,6 +30,8 @@ GOOGLE_DRIVE_FOLDER_ID = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
 # データベースアダプターを初期化
 db_adapter = firebase_db.get_db_adapter(use_firebase=firebase_db.is_firebase_available())
 score_api.set_db_adapter(db_adapter)
+
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # ローカル開発用
 
 TEMP_UPLOAD_DIR = os.path.join('static', 'temp', 'uploads')
 TEMP_PREVIEW_DIR = os.path.join('static', 'temp', 'previews')
@@ -60,6 +63,66 @@ def extract_info_from_header(image_path):
         inst_guess = "".join(c for c in inst_guess if c.isalnum() or c in " -_")
         return piece_guess, inst_guess
     except: return "", ""
+
+@app.route('/authorize_drive')
+def authorize_drive():
+    client_secret_path = os.environ.get('GOOGLE_DRIVE_CRED_PATH', 'client_secret.json')
+    if not os.path.exists(client_secret_path):
+        flash('Google Drive API credentials (client_secret.json) not found.')
+        return redirect(url_for('index'))
+
+    flow = Flow.from_client_secrets_file(
+        client_secret_path,
+        scopes=['https://www.googleapis.com/auth/drive.file']
+    )
+
+    flow.redirect_uri = url_for('oauth2callback', _external=True)
+
+    authorization_url, state = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes='true'
+    )
+
+    session['state'] = state
+    return redirect(authorization_url)
+
+
+@app.route('/oauth2callback')
+def oauth2callback():
+    client_secret_path = os.environ.get('GOOGLE_DRIVE_CRED_PATH', 'client_secret.json')
+    state = session.get('state')
+
+    if not state:
+        flash('Invalid OAuth state.')
+        return redirect(url_for('index'))
+
+    flow = Flow.from_client_secrets_file(
+        client_secret_path,
+        scopes=['https://www.googleapis.com/auth/drive.file'],
+        state=state
+    )
+    flow.redirect_uri = url_for('oauth2callback', _external=True)
+
+    # URLがhttpの場合は、httpsに強制変換しないと一部環境でエラーになるが、ローカル開発ではhttpを使用
+    authorization_response = request.url
+
+    try:
+        flow.fetch_token(authorization_response=authorization_response)
+        credentials = flow.credentials
+
+        with open('token.json', 'w') as token_file:
+            token_file.write(credentials.to_json())
+
+        # グローバルの drive_service を再初期化
+        global drive_service
+        drive_service = firebase_db.initialize_google_drive()
+
+        flash('Google Drive 認証が完了しました！')
+    except Exception as e:
+        flash(f'Google Drive 認証に失敗しました: {e}')
+
+    return redirect(url_for('index'))
+
 
 @app.route('/')
 def index():
@@ -194,27 +257,36 @@ def save_score():
 
     try:
         pages = [Image.open(os.path.join(TEMP_PREVIEW_DIR, fname)) for fname in preview_filenames]
+        saved_dir, saved_score_id = score_api.save_and_register_score(pages, year, event_name, piece, composer, arranger, instrument, score_id=score_id)
         
-        # 1. ローカル処理（JSONへの一次保存と画像保存）
-        saved_dir, saved_score_id = score_api.save_and_register_score(
-            pages, year, event_name, piece, composer, arranger, instrument, score_id=score_id
-        )
-        
-        # 2. クラウド同期処理（Driveへの階層アップロード ＋ Firebase連携）
-        # firebase_db側にすべて任せる
-        firebase_db.sync_score_to_cloud(
-            saved_dir=saved_dir,
-            piece=piece,
-            instrument=instrument,
-            year=year,
-            event_name=event_name,
-            drive_service=drive_service,
-            root_folder_id=GOOGLE_DRIVE_FOLDER_ID
-        )
+        # Google Drive にアップロード（オプション）
+        if drive_service and GOOGLE_DRIVE_FOLDER_ID:
+            # Google Drive上に作る階層構造をリストで定義します
+            event_dir_name = f"{year}{event_name}"
+            path_components = [event_dir_name, piece, instrument]
+
+            # 再帰的にフォルダを確認・生成して、保存先のフォルダIDを取得
+            target_folder_id = firebase_db.get_or_create_drive_path(
+                drive_service, GOOGLE_DRIVE_FOLDER_ID, path_components
+            )
+
+            urls = []
+            if target_folder_id:
+                urls = firebase_db.upload_score_pages_to_google_drive(
+                    saved_dir, saved_score_id, instrument,
+                    drive_service, target_folder_id
+                )
+            # Firebase にも URL を記録
+            if urls:
+                db = score_api.load_db()
+                if saved_score_id in db:
+                    if 'instruments' in db[saved_score_id] and instrument in db[saved_score_id]['instruments']:
+                        # dirに加えて、urls リストも保存する
+                        db[saved_score_id]['instruments'][instrument] = urls
+                        score_api.save_db(db)
         
         flash(f'「{piece}」({instrument}) の登録・追加が完了しました！')
         return redirect(url_for('index'))
-        
     except Exception as e:
         flash(f'保存エラー: {str(e)}')
         return redirect(url_for('index'))
