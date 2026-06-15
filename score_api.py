@@ -205,30 +205,34 @@ def detect_and_split_candidates(cv_img, config):
         return [cleaned_img]
     return [cv_img]
 
-def crop_margins_and_fit(cv_img, config):
-    gray = cv_img if len(cv_img.shape) == 2 else cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, config['binary_threshold'], 255, cv2.THRESH_BINARY_INV)
-    kernel_open = cv2.getStructuringElement(cv2.MORPH_CROSS, (5, 5))
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_open, iterations=1)
-    kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel_close, iterations=1)
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(thresh, connectivity=8)
-    clean_mask = np.zeros_like(thresh)
-    for i in range(1, num_labels):
-        area = stats[i, cv2.CC_STAT_AREA]
-        w_st = stats[i, cv2.CC_STAT_WIDTH]
-        h_st = stats[i, cv2.CC_STAT_HEIGHT]
-        density = area / (w_st * h_st) if (w_st * h_st) > 0 else 0
-        if area >= config['noise_min_area'] and density >= config['noise_min_density']: clean_mask[labels == i] = 255
-    points = cv2.findNonZero(clean_mask)
-    if points is None: cropped = np.ones((mm_to_px(10, config['dpi']), mm_to_px(10, config['dpi'])), dtype=np.uint8) * 255
+def crop_margins_and_fit(cv_img, config, manual_crop=None):
+    if manual_crop is not None:
+        x, y, w, h = manual_crop
+        cropped = cv_img[int(y):int(y+h), int(x):int(x+w)]
     else:
-        x, y, w, h = cv2.boundingRect(points)
-        pad_px = mm_to_px(config['crop_padding_mm'], config['dpi'])
-        img_h, img_w = cv_img.shape[:2]
-        x1, y1 = max(0, x - pad_px), max(0, y - pad_px)
-        x2, y2 = min(img_w, x + w + pad_px), min(img_h, y + h + pad_px)
-        cropped = cv_img[y1:y2, x1:x2]
+        gray = cv_img if len(cv_img.shape) == 2 else cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
+        _, thresh = cv2.threshold(gray, config['binary_threshold'], 255, cv2.THRESH_BINARY_INV)
+        kernel_open = cv2.getStructuringElement(cv2.MORPH_CROSS, (5, 5))
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_open, iterations=1)
+        kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel_close, iterations=1)
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(thresh, connectivity=8)
+        clean_mask = np.zeros_like(thresh)
+        for i in range(1, num_labels):
+            area = stats[i, cv2.CC_STAT_AREA]
+            w_st = stats[i, cv2.CC_STAT_WIDTH]
+            h_st = stats[i, cv2.CC_STAT_HEIGHT]
+            density = area / (w_st * h_st) if (w_st * h_st) > 0 else 0
+            if area >= config['noise_min_area'] and density >= config['noise_min_density']: clean_mask[labels == i] = 255
+        points = cv2.findNonZero(clean_mask)
+        if points is None: cropped = np.ones((mm_to_px(10, config['dpi']), mm_to_px(10, config['dpi'])), dtype=np.uint8) * 255
+        else:
+            x, y, w, h = cv2.boundingRect(points)
+            pad_px = mm_to_px(config['crop_padding_mm'], config['dpi'])
+            img_h, img_w = cv_img.shape[:2]
+            x1, y1 = max(0, x - pad_px), max(0, y - pad_px)
+            x2, y2 = min(img_w, x + w + pad_px), min(img_h, y + h + pad_px)
+            cropped = cv_img[y1:y2, x1:x2]
     pil_img = Image.fromarray(cropped)
     dpi = config['dpi']
     if config['page_orientation'] == 'portrait': a4_w, a4_h = mm_to_px(210, dpi), mm_to_px(297, dpi)
@@ -321,7 +325,7 @@ def process_file_to_1in1(file_path, config=DEFAULT_CONFIG, debug_out_dir=None, p
             
         cropped = crop_margins_and_fit(sub_img, config)
         add_debug(f"7_Cropped_Final_Page_{idx+1}", cropped)
-        processed_pages.append(cropped)
+        processed_pages.append((cropped, sub_img))
         
         progress_val = 55 + int((idx + 1) / len(split_images) * 40)
         update_progress(progress_val)
@@ -703,7 +707,8 @@ def _cli_process(args):
     config['dpi'] = args.dpi
     
     try:
-        pages = process_file_to_1in1(args.input, config, debug_out_dir=args.debug)
+        pages_with_uncropped = process_file_to_1in1(args.input, config, debug_out_dir=args.debug)
+        pages = [p[0] for p in pages_with_uncropped]
         
         if len(pages) == 1:
             pages[0].save(args.output)
@@ -735,7 +740,8 @@ def _cli_scan(args):
         print(f"処理中...")
         config = DEFAULT_CONFIG.copy()
         config['dpi'] = args.dpi
-        pages = process_file_to_1in1(temp_file, config, debug_out_dir=args.debug)
+        pages_with_uncropped = process_file_to_1in1(temp_file, config, debug_out_dir=args.debug)
+        pages = [p[0] for p in pages_with_uncropped]
         
         if len(pages) == 1:
             pages[0].save(args.output)
