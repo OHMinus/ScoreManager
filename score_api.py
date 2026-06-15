@@ -264,11 +264,17 @@ def scan_score_from_epson(output_filepath, dpi=300, device_name=None):
     except FileNotFoundError:
         raise FileNotFoundError("scanimage コマンドが見つかりません。")
 
-def process_file_to_1in1(file_path, config=DEFAULT_CONFIG, debug_out_dir=None):
+def process_file_to_1in1(file_path, config=DEFAULT_CONFIG, debug_out_dir=None, progress_callback=None):
+    def update_progress(p):
+        if progress_callback:
+            progress_callback(p)
+
+    update_progress(0)
     file_bytes = np.fromfile(file_path, dtype=np.uint8)
     cv_img = cv2.imdecode(file_bytes, cv2.IMREAD_GRAYSCALE)
     if cv_img is None: raise ValueError(f"画像を読み込めません: {file_path}")
     
+    update_progress(5)
     debug_steps = []
     def add_debug(title, img):
         if debug_out_dir:
@@ -283,17 +289,21 @@ def process_file_to_1in1(file_path, config=DEFAULT_CONFIG, debug_out_dir=None):
 
     cv_img = adjust_dynamic_range(cv_img, config)
     add_debug("2_Adjusted_Dynamic_Range", cv_img)
+    update_progress(10)
 
     # ★ ステップ1: Split前に画像が「水平」になるようにだけ補正する
     cv_img = ensure_horizontal(cv_img)
     add_debug("3_Ensure_Horizontal", cv_img)
+    update_progress(25)
         
     cv_img = deskew_and_orient_score(cv_img, config)
     add_debug("4_Deskew", cv_img)
+    update_progress(40)
 
     # 画像を分割する
     split_images = detect_and_split_candidates(cv_img, config)
     processed_pages = []
+    update_progress(55)
     
     for idx, sub_img in enumerate(split_images):
         add_debug(f"5_Split_Candidate_{idx+1}", sub_img)
@@ -304,16 +314,24 @@ def process_file_to_1in1(file_path, config=DEFAULT_CONFIG, debug_out_dir=None):
             add_debug(f"6_Ensure_Upright_{idx+1}", debug_upright)
         else:
             sub_img = ensure_upright(sub_img)
+
+        # Progress calculation based on loop iterations
+        progress_val = 55 + int((idx + 0.5) / len(split_images) * 40)
+        update_progress(progress_val)
             
         cropped = crop_margins_and_fit(sub_img, config)
         add_debug(f"7_Cropped_Final_Page_{idx+1}", cropped)
         processed_pages.append(cropped)
         
+        progress_val = 55 + int((idx + 1) / len(split_images) * 40)
+        update_progress(progress_val)
+
     if debug_out_dir:
         os.makedirs(debug_out_dir, exist_ok=True)
         out_name = os.path.join(debug_out_dir, f"debug_{uuid.uuid4().hex[:8]}.jpg")
         generate_debug_summary(debug_steps, out_name)
 
+    update_progress(100)
     return processed_pages
 
 # ==========================================
