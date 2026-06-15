@@ -78,7 +78,7 @@ def load_db_from_firebase():
     
     try:
         ref = firebase_db.reference('scores')
-        data = ref.get().val()
+        data = ref.get()
         return data if data else {}
     except Exception as e:
         print(f"✗ Failed to load from Firebase: {e}")
