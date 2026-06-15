@@ -9,9 +9,14 @@ import cv2
 import pytesseract
 import zipfile
 import io
+from dotenv import load_dotenv
+
+# dotenv はモジュールの読み込み前に実行する
+if os.path.isfile(".env"):
+    load_dotenv()
+
 import score_api
 import firebase_db
-from dotenv import load_dotenv
 
 app = Flask(__name__)
 app.secret_key = 'score_processor_secret_key'
@@ -23,6 +28,7 @@ GOOGLE_DRIVE_FOLDER_ID = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
 
 # データベースアダプターを初期化
 db_adapter = firebase_db.get_db_adapter(use_firebase=firebase_db.is_firebase_available())
+score_api.set_db_adapter(db_adapter)
 
 TEMP_UPLOAD_DIR = os.path.join('static', 'temp', 'uploads')
 TEMP_PREVIEW_DIR = os.path.join('static', 'temp', 'previews')
@@ -188,7 +194,7 @@ def save_score():
 
     try:
         pages = [Image.open(os.path.join(TEMP_PREVIEW_DIR, fname)) for fname in preview_filenames]
-        saved_dir = score_api.save_and_register_score(pages, year, event_name, piece, composer, arranger, instrument, score_id=score_id)
+        saved_dir, saved_score_id = score_api.save_and_register_score(pages, year, event_name, piece, composer, arranger, instrument, score_id=score_id)
         
         # Google Drive にアップロード（オプション）
         if drive_service and GOOGLE_DRIVE_FOLDER_ID:
@@ -201,15 +207,20 @@ def save_score():
                 drive_service, GOOGLE_DRIVE_FOLDER_ID, path_components
             )
             
+            urls = []
             if target_folder_id:
                 urls = firebase_db.upload_score_pages_to_google_drive(
-                    saved_dir, score_id or score_api.load_db().get('id', ''), instrument,
+                    saved_dir, saved_score_id, instrument,
                     drive_service, target_folder_id
                 )
             # Firebase にも URL を記録
-            if urls and firebase_db.is_firebase_available():
-                db = firebase_db.get_db_adapter().load()
-                # TODO: DB に URL を記録する処理
+            if urls:
+                db = score_api.load_db()
+                if saved_score_id in db:
+                    if 'instruments' in db[saved_score_id] and instrument in db[saved_score_id]['instruments']:
+                        # dirに加えて、urls リストも保存する
+                        db[saved_score_id]['instruments'][instrument] = urls
+                        score_api.save_db(db)
         
         flash(f'「{piece}」({instrument}) の登録・追加が完了しました！')
         return redirect(url_for('index'))
@@ -405,6 +416,4 @@ def rotate_image():
         return jsonify({'success': False, 'error': str(e)}), 500
     
 if __name__ == '__main__':
-    if os.path.isfile(".env"):
-        load_dotenv()
     app.run(host='0.0.0.0', port=5000, debug=True)
