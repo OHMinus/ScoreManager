@@ -6,6 +6,39 @@ import glob
 import json
 import uuid
 import subprocess
+import io
+import requests
+import firebase_admin
+from firebase_admin import credentials, db as firebase_db
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
+
+# Initialize Firebase
+FIREBASE_CRED_PATH = os.environ.get('FIREBASE_CRED_PATH')
+FIREBASE_DATABASE_URL = os.environ.get('FIREBASE_DATABASE_URL')
+if FIREBASE_CRED_PATH and FIREBASE_DATABASE_URL and not firebase_admin._apps:
+    try:
+        cred = credentials.Certificate(FIREBASE_CRED_PATH)
+        firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DATABASE_URL})
+        print("Firebase initialized.")
+    except Exception as e:
+        print(f"Failed to initialize Firebase: {e}")
+
+# Initialize Google Drive API
+GOOGLE_DRIVE_CRED_PATH = os.environ.get('GOOGLE_DRIVE_CRED_PATH')
+GOOGLE_DRIVE_FOLDER_ID = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
+drive_service = None
+if GOOGLE_DRIVE_CRED_PATH:
+    try:
+        drive_creds = service_account.Credentials.from_service_account_file(
+            GOOGLE_DRIVE_CRED_PATH, scopes=['https://www.googleapis.com/auth/drive.file']
+        )
+        drive_service = build('drive', 'v3', credentials=drive_creds)
+        print("Google Drive initialized.")
+    except Exception as e:
+        print(f"Failed to initialize Google Drive: {e}")
+
 
 DEFAULT_CONFIG = {
     'dpi': 300, 'margin_top': 5, 'margin_bottom': 5, 'margin_left': 5, 'margin_right': 5,
@@ -319,12 +352,28 @@ def process_file_to_1in1(file_path, config=DEFAULT_CONFIG, debug_out_dir=None):
 DB_PATH = "scores_db.json"
 
 def load_db(db_path=DB_PATH):
+    if firebase_admin._apps:
+        try:
+            ref = firebase_db.reference('scores')
+            data = ref.get()
+            return data if data else {}
+        except Exception as e:
+            print(f"Firebase load error: {e}")
+            return {}
     if not os.path.exists(db_path): return {}
     with open(db_path, 'r', encoding='utf-8') as f:
         try: return json.load(f)
         except: return {}
 
 def save_db(data, db_path=DB_PATH):
+    if firebase_admin._apps:
+        try:
+            ref = firebase_db.reference('scores')
+            ref.set(data)
+            return
+        except Exception as e:
+            print(f"Firebase save error: {e}")
+            return
     with open(db_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
@@ -338,32 +387,65 @@ def save_and_register_score(processed_pages_list, year, event_name, piece_name, 
             score.setdefault('events', []).append({'year': str(year), 'event_name': str(event_name)})
             
         if instrument not in score.get('instruments', {}):
-            score.setdefault('instruments', {})[instrument] = os.path.join(base_save_dir, score_id, instrument)
+            if drive_service:
+                 score.setdefault('instruments', {})[instrument] = []
+            else:
+                 score.setdefault('instruments', {})[instrument] = os.path.join(base_save_dir, score_id, instrument)
             
-        save_dir = score['instruments'][instrument]
+        save_dir_or_urls = score['instruments'][instrument]
     else:
         score_id = str(uuid.uuid4())
-        save_dir = os.path.join(base_save_dir, score_id, instrument)
+        save_dir_or_urls = [] if drive_service else os.path.join(base_save_dir, score_id, instrument)
         db[score_id] = {
             'piece': str(piece_name),
             'composer': str(composer),
             'arranger': str(arranger),
             'events': [{'year': str(year), 'event_name': str(event_name)}],
             'instruments': {
-                instrument: save_dir
+                instrument: save_dir_or_urls
             }
         }
         
-    os.makedirs(save_dir, exist_ok=True)
-    existing_files = glob.glob(os.path.join(save_dir, "page_*.png"))
-    start_idx = len(existing_files)
-    
+    start_idx = len(save_dir_or_urls) if isinstance(save_dir_or_urls, list) else 0
+    if not isinstance(save_dir_or_urls, list):
+         os.makedirs(save_dir_or_urls, exist_ok=True)
+         existing_files = glob.glob(os.path.join(save_dir_or_urls, "page_*.png"))
+         start_idx = len(existing_files)
+
     for i, page in enumerate(processed_pages_list):
-        save_path = os.path.join(save_dir, f"page_{start_idx + i + 1:03d}.png")
-        page.save(save_path, optimize=True)
+        filename = f"{score_id}_{instrument}_page_{start_idx + i + 1:03d}.png"
+
+        if drive_service:
+            try:
+                img_io = io.BytesIO()
+                page.save(img_io, format='PNG', optimize=True)
+                img_io.seek(0)
+                media = MediaIoBaseUpload(img_io, mimetype='image/png', resumable=True)
+                file_metadata = {'name': filename}
+                if GOOGLE_DRIVE_FOLDER_ID:
+                    file_metadata['parents'] = [GOOGLE_DRIVE_FOLDER_ID]
+
+                uploaded_file = drive_service.files().create(
+                    body=file_metadata, media_body=media, fields='id, webViewLink, webContentLink'
+                ).execute()
+
+                drive_service.permissions().create(
+                    fileId=uploaded_file.get('id'),
+                    body={'type': 'anyone', 'role': 'reader'}
+                ).execute()
+
+                url_to_save = uploaded_file.get('webContentLink') or uploaded_file.get('webViewLink')
+                db[score_id]['instruments'][instrument].append(url_to_save)
+            except Exception as e:
+                print(f"Error uploading to Drive: {e}")
+                # Fallback? Not implemented, just fail locally.
+                raise e
+        else:
+            save_path = os.path.join(save_dir_or_urls, filename)
+            page.save(save_path, optimize=True)
 
     save_db(db)
-    return save_dir
+    return db[score_id]['instruments'][instrument]
 
 def get_profiles_by_piece(piece):
     db = load_db()
@@ -404,7 +486,10 @@ def get_piece_details(score_id):
     
     insts = []
     for inst_name, d in s.get('instruments', {}).items():
-        insts.append({'name': inst_name, 'dir': d})
+        if isinstance(d, list):
+             insts.append({'name': inst_name, 'urls': d})
+        else:
+             insts.append({'name': inst_name, 'dir': d})
     insts = sorted(insts, key=lambda x: x['name'])
     
     return {
@@ -495,11 +580,23 @@ def search_pieces_by_keyword(keyword):
             })
     return sorted(results, key=lambda x: x['piece'])
 
-def apply_layout(directory, mode='booklet', orientation='portrait', booklet_dir='left', dpi=300):
-    if not os.path.exists(directory): raise FileNotFoundError(f"ディレクトリが見つかりません: {directory}")
-    image_files = sorted(glob.glob(os.path.join(directory, "*.png")))
-    if not image_files: raise ValueError(f"画像がありません: {directory}")
-    pages = [Image.open(f) for f in image_files]
+def apply_layout(directory, mode='booklet', orientation='portrait', booklet_dir='left', dpi=300, urls=None):
+    pages = []
+    if urls:
+        for url in urls:
+            try:
+                 response = requests.get(url)
+                 response.raise_for_status()
+                 pages.append(Image.open(io.BytesIO(response.content)))
+            except Exception as e:
+                 print(f"Error downloading image from Drive: {e}")
+                 raise ValueError(f"画像のダウンロードに失敗しました: {url}")
+        if not pages: raise ValueError(f"画像がありません")
+    else:
+        if not os.path.exists(directory): raise FileNotFoundError(f"ディレクトリが見つかりません: {directory}")
+        image_files = sorted(glob.glob(os.path.join(directory, "*.png")))
+        if not image_files: raise ValueError(f"画像がありません: {directory}")
+        pages = [Image.open(f) for f in image_files]
     output_pages = []
 
     def create_a3(p1, p2):
@@ -529,8 +626,8 @@ def apply_layout(directory, mode='booklet', orientation='portrait', booklet_dir=
             output_pages.append(create_a3(pages[idx1], pages[idx2]))
     return output_pages
 
-def layout_and_print_score(directory, mode='booklet', orientation='portrait', printer_name=None, booklet_dir='left', dpi=300):
-    output_pages = apply_layout(directory, mode, orientation, booklet_dir, dpi)
+def layout_and_print_score(directory, mode='booklet', orientation='portrait', printer_name=None, booklet_dir='left', dpi=300, urls=None):
+    output_pages = apply_layout(directory, mode, orientation, booklet_dir, dpi, urls=urls)
     temp_pdf_path = "/tmp/score_print_temp.pdf"
     if output_pages:
         output_pages[0].save(temp_pdf_path, save_all=True, append_images=output_pages[1:], format='PDF', resolution=dpi)

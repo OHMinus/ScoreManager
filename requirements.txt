@@ -9,3 +9,7 @@ opencv-python==4.13.0.90
 pillow==12.1.0
 Werkzeug==3.1.6
 pytesseract>=0.3.10
+firebase-admin
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
