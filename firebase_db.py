@@ -14,7 +14,10 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from PIL import Image
 import io
-
+import score_api
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 
 # ==========================================
 # Firebase と Google Drive の初期化
@@ -42,24 +45,40 @@ def initialize_firebase():
 
 
 def initialize_google_drive():
-    """Google Drive API を初期化する"""
-    google_drive_cred_path = os.environ.get('GOOGLE_DRIVE_CRED_PATH')
+    """OAuth 2.0 を使用して Google Drive API を初期化する"""
+    # 既存のフォルダ内を検索したり作成したりするため、ドライブ全体のアクセス権限を設定
+    SCOPES = ['https://www.googleapis.com/auth/drive']
+    creds = None
     
-    if not google_drive_cred_path:
-        return None
-    
+    # 既に認証済みの token.json があれば読み込む
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+        
+    # 有効な認証情報がない場合は、ブラウザを開いてログイン・承認させる
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            client_secret_path = os.environ.get('GOOGLE_DRIVE_CRED_PATH', 'client_secret.json')
+            if not os.path.exists(client_secret_path):
+                print(f"✗ Google Drive credentials not found at {client_secret_path}")
+                return None
+                
+            flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
+            # ローカルサーバーを立ち上げてブラウザ認証を行う
+            creds = flow.run_local_server(port=8080, open_browser=False)
+            
+        # 次回以降ブラウザログインを省略するためにトークンを保存
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
+
     try:
-        drive_creds = service_account.Credentials.from_service_account_file(
-            google_drive_cred_path,
-            scopes=['https://www.googleapis.com/auth/drive.file']
-        )
-        drive_service = build('drive', 'v3', credentials=drive_creds)
-        print("✓ Google Drive API initialized.")
+        drive_service = build('drive', 'v3', credentials=creds)
+        print("✓ Google Drive API initialized with OAuth 2.0.")
         return drive_service
     except Exception as e:
         print(f"✗ Failed to initialize Google Drive: {e}")
         return None
-
 
 # ==========================================
 # DB 操作（Firebase or JSON ファイル対応）
@@ -72,7 +91,7 @@ def load_db_from_firebase():
     
     try:
         ref = firebase_db.reference('scores')
-        data = ref.get().val()
+        data = ref.get()
         return data if data else {}
     except Exception as e:
         print(f"✗ Failed to load from Firebase: {e}")
@@ -337,4 +356,49 @@ def is_firebase_available():
 
 def is_google_drive_available():
     """Google Drive が利用可能か判定する"""
-    return bool(os.environ.get('GOOGLE_DRIVE_CRED_PATH'))
+    client_secret_path = os.environ.get('GOOGLE_DRIVE_CRED_PATH', 'client_secret.json')
+    return os.path.exists('token.json') or os.path.exists(client_secret_path)
+
+
+def sync_score_to_cloud(saved_dir, piece, instrument, year, event_name, drive_service, root_folder_id):
+    """
+    Google Driveへの階層的アップロードと、Firebaseへのデータ同期を一括で処理するラッパー関数
+    """
+    if not drive_service or not root_folder_id:
+        return False
+        
+    # 1. 保存先のローカルディレクトリパスから実際の score_id を逆算
+    # (例: score_data/UUID/Alto_Sax -> UUID)
+    actual_score_id = os.path.basename(os.path.dirname(saved_dir))
+
+    # 2. Google Drive 上に階層フォルダ (年度イベント名 / 曲名 / 楽器名) を作成・取得
+    event_dir_name = f"{year}{event_name}"
+    path_components = [event_dir_name, piece, instrument]
+    
+    target_folder_id = get_or_create_drive_path(
+        drive_service, root_folder_id, path_components
+    )
+
+    # 3. 指定フォルダへ画像をアップロードし、URLのリストを取得
+    urls = []
+    if target_folder_id:
+        urls = upload_score_pages_to_google_drive(
+            saved_dir, actual_score_id, instrument,
+            drive_service, target_folder_id
+        )
+
+    # 4. データベースの更新と Firebase への同期
+    # (ローカルJSONを読み込み -> URLを上書き -> 再度保存 -> Firebaseへ送信)
+    db = score_api.load_db()
+
+    if urls and actual_score_id in db:
+        db[actual_score_id]['instruments'][instrument] = urls
+        score_api.save_db(db) # ローカルのJSONをURL付きに更新
+
+        if is_firebase_available():
+            db_adapter = get_db_adapter(use_firebase=True)
+            db_adapter.save(db)
+            print(f"✓ Data successfully synced to Firebase for ID: {actual_score_id}")
+            return True
+            
+    return False

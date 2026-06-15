@@ -194,36 +194,27 @@ def save_score():
 
     try:
         pages = [Image.open(os.path.join(TEMP_PREVIEW_DIR, fname)) for fname in preview_filenames]
-        saved_dir, saved_score_id = score_api.save_and_register_score(pages, year, event_name, piece, composer, arranger, instrument, score_id=score_id)
         
-        # Google Drive にアップロード（オプション）
-        if drive_service and GOOGLE_DRIVE_FOLDER_ID:
-            # Google Drive上に作る階層構造をリストで定義します
-            event_dir_name = f"{year}{event_name}"
-            path_components = [event_dir_name, piece, instrument]
-            
-            # 再帰的にフォルダを確認・生成して、保存先のフォルダIDを取得
-            target_folder_id = firebase_db.get_or_create_drive_path(
-                drive_service, GOOGLE_DRIVE_FOLDER_ID, path_components
-            )
-            
-            urls = []
-            if target_folder_id:
-                urls = firebase_db.upload_score_pages_to_google_drive(
-                    saved_dir, saved_score_id, instrument,
-                    drive_service, target_folder_id
-                )
-            # Firebase にも URL を記録
-            if urls:
-                db = score_api.load_db()
-                if saved_score_id in db:
-                    if 'instruments' in db[saved_score_id] and instrument in db[saved_score_id]['instruments']:
-                        # dirに加えて、urls リストも保存する
-                        db[saved_score_id]['instruments'][instrument] = urls
-                        score_api.save_db(db)
+        # 1. ローカル処理（JSONへの一次保存と画像保存）
+        saved_dir, saved_score_id = score_api.save_and_register_score(
+            pages, year, event_name, piece, composer, arranger, instrument, score_id=score_id
+        )
+        
+        # 2. クラウド同期処理（Driveへの階層アップロード ＋ Firebase連携）
+        # firebase_db側にすべて任せる
+        firebase_db.sync_score_to_cloud(
+            saved_dir=saved_dir,
+            piece=piece,
+            instrument=instrument,
+            year=year,
+            event_name=event_name,
+            drive_service=drive_service,
+            root_folder_id=GOOGLE_DRIVE_FOLDER_ID
+        )
         
         flash(f'「{piece}」({instrument}) の登録・追加が完了しました！')
         return redirect(url_for('index'))
+        
     except Exception as e:
         flash(f'保存エラー: {str(e)}')
         return redirect(url_for('index'))
