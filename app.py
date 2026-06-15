@@ -22,6 +22,14 @@ import score_api
 import firebase_db
 
 app = Flask(__name__)
+
+progress_store = {}
+
+@app.route('/progress/<task_id>', methods=['GET'])
+def get_progress(task_id):
+    progress = progress_store.get(task_id, 0)
+    return jsonify({"progress": progress})
+
 app.secret_key = 'score_processor_secret_key'
 
 # Firebase と Google Drive の初期化
@@ -147,6 +155,10 @@ def process_files():
     files = request.files.getlist('files')
     if not files or files[0].filename == '': return redirect(url_for('index'))
 
+    task_id = request.form.get('task_id')
+    if task_id:
+        progress_store[task_id] = 0
+
     clear_temp_dir(TEMP_UPLOAD_DIR)
     clear_temp_dir(TEMP_PREVIEW_DIR)
     clear_temp_dir(TEMP_UNCROPPED_DIR)
@@ -154,12 +166,23 @@ def process_files():
     first_file_path = None
     
     try:
+        total_files = len(files)
         for i, file in enumerate(files):
             if file.filename == '': continue
             temp_path = os.path.join(TEMP_UPLOAD_DIR, file.filename)
             file.save(temp_path)
             if i == 0: first_file_path = temp_path
             
+            def progress_cb(p):
+                if task_id:
+                    # Calculate overall progress
+                    base_progress = (i / total_files) * 100
+                    current_file_progress = (p / 100) * (100 / total_files)
+                    overall_p = int(base_progress + current_file_progress)
+                    progress_store[task_id] = overall_p
+                    if overall_p >= 100:
+                        progress_store.pop(task_id, None)
+
             # デバッグディレクトリを指定して処理を実行
             pages_with_uncropped = score_api.process_file_to_1in1(temp_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR)
             for page, uncropped in pages_with_uncropped:
@@ -191,10 +214,21 @@ def scan_ui():
 def scan_execute():
     device_name = request.form.get('device_name', '')
     scanned_files = request.form.getlist('scanned_files[]')
+    task_id = request.form.get('task_id')
+
+    if task_id:
+        progress_store[task_id] = 0
+
     try:
         temp_scan_path = os.path.join(TEMP_UPLOAD_DIR, f"scanned_{uuid.uuid4().hex}.png")
         score_api.scan_score_from_epson(temp_scan_path, dpi=score_api.DEFAULT_CONFIG['dpi'], device_name=device_name if device_name else None)
         
+        def progress_cb(p):
+            if task_id:
+                progress_store[task_id] = int(p)
+                if p >= 100:
+                    progress_store.pop(task_id, None)
+
         # デバッグディレクトリを指定して処理を実行
         pages_with_uncropped = score_api.process_file_to_1in1(temp_scan_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR)
         for page, uncropped in pages_with_uncropped:
