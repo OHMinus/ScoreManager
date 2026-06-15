@@ -10,6 +10,8 @@ import cv2
 import pytesseract
 import zipfile
 import io
+import urllib.parse
+from googleapiclient.http import MediaIoBaseDownload
 from dotenv import load_dotenv
 
 # dotenv はモジュールの読み込み前に実行する
@@ -344,8 +346,35 @@ def view_score():
                 target_dir = inst['dir']
             break
             
+    # URLs だけが DB に保存されている場合、ローカルにダウンロードする
     if urls is not None:
-         return render_template('view_score.html', details=details, instrument=instrument, urls=urls)
+        target_dir = os.path.join("score_data", score_id, instrument)
+        os.makedirs(target_dir, exist_ok=True)
+
+        image_files = sorted(glob.glob(os.path.join(target_dir, "*.png")))
+
+        # ローカルの画像数が URL の数と一致しない場合は再ダウンロード
+        if len(image_files) != len(urls):
+            for i, url in enumerate(urls):
+                filename = f"{score_id}_{instrument}_page_{i + 1:03d}.png"
+                filepath = os.path.join(target_dir, filename)
+                if not os.path.exists(filepath):
+                    try:
+                        parsed = urllib.parse.urlparse(url)
+                        file_id = urllib.parse.parse_qs(parsed.query).get('id', [None])[0]
+                        if file_id and drive_service:
+                            request_obj = drive_service.files().get_media(fileId=file_id)
+                            fh = io.BytesIO()
+                            downloader = MediaIoBaseDownload(fh, request_obj)
+                            done = False
+                            while done is False:
+                                status, done = downloader.next_chunk()
+                            with open(filepath, 'wb') as f:
+                                f.write(fh.getvalue())
+                        else:
+                            print(f"Could not extract file ID from URL or drive_service not available: {url}")
+                    except Exception as e:
+                        print(f"Error downloading image from Drive API: {e}")
 
     if not target_dir: return redirect(url_for('piece_details', id=score_id))
     
@@ -362,7 +391,10 @@ def score_image(score_id, instrument, filename):
     target_dir = None
     for inst in details['instruments']:
         if inst['name'] == instrument:
-            target_dir = inst['dir']
+            if 'dir' in inst:
+                target_dir = inst['dir']
+            elif 'urls' in inst:
+                target_dir = os.path.join("score_data", score_id, instrument)
             break
             
     if not target_dir or not os.path.exists(os.path.join(target_dir, filename)):
