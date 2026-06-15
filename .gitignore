@@ -224,3 +224,6 @@ test
 
 # nodejs 
 node_modules/
+
+#secret files
+vault

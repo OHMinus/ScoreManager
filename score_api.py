@@ -8,36 +8,6 @@ import uuid
 import subprocess
 import io
 import requests
-import firebase_admin
-from firebase_admin import credentials, db as firebase_db
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
-
-# Initialize Firebase
-FIREBASE_CRED_PATH = os.environ.get('FIREBASE_CRED_PATH')
-FIREBASE_DATABASE_URL = os.environ.get('FIREBASE_DATABASE_URL')
-if FIREBASE_CRED_PATH and FIREBASE_DATABASE_URL and not firebase_admin._apps:
-    try:
-        cred = credentials.Certificate(FIREBASE_CRED_PATH)
-        firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DATABASE_URL})
-        print("Firebase initialized.")
-    except Exception as e:
-        print(f"Failed to initialize Firebase: {e}")
-
-# Initialize Google Drive API
-GOOGLE_DRIVE_CRED_PATH = os.environ.get('GOOGLE_DRIVE_CRED_PATH')
-GOOGLE_DRIVE_FOLDER_ID = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
-drive_service = None
-if GOOGLE_DRIVE_CRED_PATH:
-    try:
-        drive_creds = service_account.Credentials.from_service_account_file(
-            GOOGLE_DRIVE_CRED_PATH, scopes=['https://www.googleapis.com/auth/drive.file']
-        )
-        drive_service = build('drive', 'v3', credentials=drive_creds)
-        print("Google Drive initialized.")
-    except Exception as e:
-        print(f"Failed to initialize Google Drive: {e}")
 
 
 DEFAULT_CONFIG = {
@@ -352,32 +322,39 @@ def process_file_to_1in1(file_path, config=DEFAULT_CONFIG, debug_out_dir=None):
 DB_PATH = "scores_db.json"
 
 def load_db(db_path=DB_PATH):
-    if firebase_admin._apps:
-        try:
-            ref = firebase_db.reference('scores')
-            data = ref.get()
-            return data if data else {}
-        except Exception as e:
-            print(f"Firebase load error: {e}")
-            return {}
-    if not os.path.exists(db_path): return {}
-    with open(db_path, 'r', encoding='utf-8') as f:
-        try: return json.load(f)
-        except: return {}
+    """
+    JSON ファイルからデータベースを読み込む。
+    Firebase を使う場合は firebase_db モジュールを使用してください。
+    """
+    if not os.path.exists(db_path):
+        return {}
+    try:
+        with open(db_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading database: {e}")
+        return {}
 
 def save_db(data, db_path=DB_PATH):
-    if firebase_admin._apps:
-        try:
-            ref = firebase_db.reference('scores')
-            ref.set(data)
-            return
-        except Exception as e:
-            print(f"Firebase save error: {e}")
-            return
-    with open(db_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    """
+    JSON ファイルにデータベースを保存する。
+    Firebase を使う場合は firebase_db モジュールを使用してください。
+    """
+    try:
+        with open(db_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+        return True
+    except Exception as e:
+        print(f"Error saving database: {e}")
+        return False
 
 def save_and_register_score(processed_pages_list, year, event_name, piece_name, composer, arranger, instrument, score_id=None, base_save_dir="score_data"):
+    """
+    処理済みの楽譜ページを保存してデータベースに登録する。
+    
+    注: Google Drive への自動アップロードはこのバージョンではサポートされていません。
+    Firebase/Google Drive 統合は firebase_db モジュールを別途使用してください。
+    """
     db = load_db()
     
     if score_id and score_id in db:
@@ -387,65 +364,33 @@ def save_and_register_score(processed_pages_list, year, event_name, piece_name, 
             score.setdefault('events', []).append({'year': str(year), 'event_name': str(event_name)})
             
         if instrument not in score.get('instruments', {}):
-            if drive_service:
-                 score.setdefault('instruments', {})[instrument] = []
-            else:
-                 score.setdefault('instruments', {})[instrument] = os.path.join(base_save_dir, score_id, instrument)
+            score.setdefault('instruments', {})[instrument] = os.path.join(base_save_dir, score_id, instrument)
             
-        save_dir_or_urls = score['instruments'][instrument]
+        save_dir = score['instruments'][instrument]
     else:
         score_id = str(uuid.uuid4())
-        save_dir_or_urls = [] if drive_service else os.path.join(base_save_dir, score_id, instrument)
+        save_dir = os.path.join(base_save_dir, score_id, instrument)
         db[score_id] = {
             'piece': str(piece_name),
             'composer': str(composer),
             'arranger': str(arranger),
             'events': [{'year': str(year), 'event_name': str(event_name)}],
             'instruments': {
-                instrument: save_dir_or_urls
+                instrument: save_dir
             }
         }
         
-    start_idx = len(save_dir_or_urls) if isinstance(save_dir_or_urls, list) else 0
-    if not isinstance(save_dir_or_urls, list):
-         os.makedirs(save_dir_or_urls, exist_ok=True)
-         existing_files = glob.glob(os.path.join(save_dir_or_urls, "page_*.png"))
-         start_idx = len(existing_files)
+    os.makedirs(save_dir, exist_ok=True)
+    existing_files = glob.glob(os.path.join(save_dir, "*.png"))
+    start_idx = len(existing_files)
 
     for i, page in enumerate(processed_pages_list):
-        filename = f"{score_id}_{instrument}_page_{start_idx + i + 1:03d}.png"
-
-        if drive_service:
-            try:
-                img_io = io.BytesIO()
-                page.save(img_io, format='PNG', optimize=True)
-                img_io.seek(0)
-                media = MediaIoBaseUpload(img_io, mimetype='image/png', resumable=True)
-                file_metadata = {'name': filename}
-                if GOOGLE_DRIVE_FOLDER_ID:
-                    file_metadata['parents'] = [GOOGLE_DRIVE_FOLDER_ID]
-
-                uploaded_file = drive_service.files().create(
-                    body=file_metadata, media_body=media, fields='id, webViewLink, webContentLink'
-                ).execute()
-
-                drive_service.permissions().create(
-                    fileId=uploaded_file.get('id'),
-                    body={'type': 'anyone', 'role': 'reader'}
-                ).execute()
-
-                url_to_save = uploaded_file.get('webContentLink') or uploaded_file.get('webViewLink')
-                db[score_id]['instruments'][instrument].append(url_to_save)
-            except Exception as e:
-                print(f"Error uploading to Drive: {e}")
-                # Fallback? Not implemented, just fail locally.
-                raise e
-        else:
-            save_path = os.path.join(save_dir_or_urls, filename)
-            page.save(save_path, optimize=True)
+        filename = f"page_{start_idx + i + 1:03d}.png"
+        save_path = os.path.join(save_dir, filename)
+        page.save(save_path, optimize=True)
 
     save_db(db)
-    return db[score_id]['instruments'][instrument]
+    return save_dir
 
 def get_profiles_by_piece(piece):
     db = load_db()
@@ -644,3 +589,183 @@ def layout_and_print_score(directory, mode='booklet', orientation='portrait', pr
 
 def GetDefaultConfig():
     return DEFAULT_CONFIG.copy()
+
+
+# ==========================================
+# CLI インターフェース
+# ==========================================
+
+def main():
+    """
+    score_api をコマンドラインから使用するためのインターフェース
+    """
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="楽譜スキャン画像を処理・最適化するツール",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+使用例:
+  # 単一ファイルを処理
+  python score_api.py process input.jpg -o output.png
+  
+  # デバッグ情報を出力
+  python score_api.py process input.jpg -o output.png --debug debug_output/
+  
+  # スキャナから直接スキャン
+  python score_api.py scan -o scanned.png
+  
+  # データベースの内容を表示
+  python score_api.py list-pieces
+        """
+    )
+    
+    subparsers = parser.add_subparsers(dest='command', help='実行するコマンド')
+    
+    # process コマンド
+    process_parser = subparsers.add_parser('process', help='楽譜画像を処理する')
+    process_parser.add_argument('input', help='入力ファイルパス（JPG, PNG, PDFなど）')
+    process_parser.add_argument('-o', '--output', default='output.png', help='出力ファイルパス（デフォルト: output.png）')
+    process_parser.add_argument('--debug', help='デバッグ出力ディレクトリ')
+    process_parser.add_argument('--dpi', type=int, default=DEFAULT_CONFIG['dpi'], help=f'DPI（デフォルト: {DEFAULT_CONFIG["dpi"]}）')
+    
+    # scan コマンド
+    scan_parser = subparsers.add_parser('scan', help='スキャナからスキャンして処理する')
+    scan_parser.add_argument('-o', '--output', default='scanned.png', help='出力ファイルパス')
+    scan_parser.add_argument('--device', help='スキャナデバイス名')
+    scan_parser.add_argument('--dpi', type=int, default=DEFAULT_CONFIG['dpi'], help=f'DPI（デフォルト: {DEFAULT_CONFIG["dpi"]}）')
+    scan_parser.add_argument('--debug', help='デバッグ出力ディレクトリ')
+    
+    # list-pieces コマンド
+    subparsers.add_parser('list-pieces', help='保存されている楽譜一覧を表示')
+    
+    # list-events コマンド
+    subparsers.add_parser('list-events', help='登録されているイベント一覧を表示')
+    
+    # config コマンド
+    config_parser = subparsers.add_parser('config', help='デフォルト設定を表示')
+    
+    args = parser.parse_args()
+    
+    if args.command == 'process':
+        _cli_process(args)
+    elif args.command == 'scan':
+        _cli_scan(args)
+    elif args.command == 'list-pieces':
+        _cli_list_pieces()
+    elif args.command == 'list-events':
+        _cli_list_events()
+    elif args.command == 'config':
+        _cli_show_config()
+    else:
+        parser.print_help()
+
+def _cli_process(args):
+    """処理コマンド実装"""
+    if not os.path.exists(args.input):
+        print(f"エラー: ファイルが見つかりません: {args.input}")
+        return False
+    
+    print(f"処理中: {args.input}")
+    config = DEFAULT_CONFIG.copy()
+    config['dpi'] = args.dpi
+    
+    try:
+        pages = process_file_to_1in1(args.input, config, debug_out_dir=args.debug)
+        
+        if len(pages) == 1:
+            pages[0].save(args.output)
+            print(f"✓ 完了: {args.output}")
+        else:
+            # 複数ページの場合
+            base_name, ext = os.path.splitext(args.output)
+            for i, page in enumerate(pages):
+                filename = f"{base_name}_{i+1:02d}{ext}"
+                page.save(filename)
+                print(f"✓ 完了: {filename}")
+        
+        if args.debug:
+            print(f"✓ デバッグ情報: {args.debug}/")
+        
+        return True
+    except Exception as e:
+        print(f"エラー: {e}")
+        return False
+
+def _cli_scan(args):
+    """スキャンコマンド実装"""
+    print(f"スキャン中...")
+    
+    try:
+        temp_file = "/tmp/score_scan_temp.png"
+        scan_score_from_epson(temp_file, dpi=args.dpi, device_name=args.device)
+        
+        print(f"処理中...")
+        config = DEFAULT_CONFIG.copy()
+        config['dpi'] = args.dpi
+        pages = process_file_to_1in1(temp_file, config, debug_out_dir=args.debug)
+        
+        if len(pages) == 1:
+            pages[0].save(args.output)
+        else:
+            base_name, ext = os.path.splitext(args.output)
+            for i, page in enumerate(pages):
+                filename = f"{base_name}_{i+1:02d}{ext}"
+                page.save(filename)
+                print(f"✓ 完了: {filename}")
+        
+        os.remove(temp_file)
+        print(f"✓ 完了: {args.output}")
+        
+        if args.debug:
+            print(f"✓ デバッグ情報: {args.debug}/")
+        
+        return True
+    except Exception as e:
+        print(f"エラー: {e}")
+        return False
+
+def _cli_list_pieces():
+    """楽譜一覧表示コマンド実装"""
+    pieces = get_all_scores_by_piece()
+    
+    if not pieces:
+        print("登録されている楽譜がありません。")
+        return
+    
+    print("\n【登録済み楽譜一覧】\n")
+    for i, piece_info in enumerate(pieces, 1):
+        print(f"{i}. {piece_info['piece']}")
+        if piece_info['composer']:
+            print(f"   作曲: {piece_info['composer']}")
+        if piece_info['arranger']:
+            print(f"   編曲: {piece_info['arranger']}")
+        if piece_info['events']:
+            print(f"   イベント: {', '.join(f'{e["year"]}{e["event_name"]}' for e in piece_info['events'])}")
+        print()
+
+def _cli_list_events():
+    """イベント一覧表示コマンド実装"""
+    grouped = get_all_scores_grouped()
+    
+    if not grouped:
+        print("登録されているイベントがありません。")
+        return
+    
+    print("\n【イベント別楽譜一覧】\n")
+    for (year, event_name), pieces in grouped.items():
+        print(f"【{year} {event_name}】({len(pieces)}曲)")
+        for piece_info in pieces:
+            print(f"  - {piece_info['piece']}")
+        print()
+
+def _cli_show_config():
+    """設定表示コマンド実装"""
+    print("\n【デフォルト設定】\n")
+    for key, value in DEFAULT_CONFIG.items():
+        print(f"  {key}: {value}")
+    print()
+
+
+if __name__ == '__main__':
+    main()
