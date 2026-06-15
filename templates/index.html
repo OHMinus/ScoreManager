@@ -54,7 +54,10 @@
                 <p style="margin: 5px 0 0 0; font-weight: bold; color: #2c3e50;">処理中... 画面が変わるまでお待ちください</p>
             </div>
         </form>
-
+        <div class="action-box">
+            <p>スキャンする際にGoogle drive にログインするとネットワークを介して共有することができます。</p>
+            <a href="{{ url_for('authorize_drive') }}" class="btn-link" style="background: #e62222;">Login to Google Drive</a>
+        </div>
         <h2>2. 楽譜の検索と閲覧</h2>
         <form action="{{ url_for('search_score') }}" method="GET">
             <div class="form-group">

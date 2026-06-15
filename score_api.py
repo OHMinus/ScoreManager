@@ -317,36 +317,50 @@ def process_file_to_1in1(file_path, config=DEFAULT_CONFIG, debug_out_dir=None):
     return processed_pages
 
 # ==========================================
-# JSON データベース操作 API
+# データベース操作 API (Adapter パターン)
 # ==========================================
 DB_PATH = "scores_db.json"
 
-def load_db(db_path=DB_PATH):
-    """
-    JSON ファイルからデータベースを読み込む。
-    Firebase を使う場合は firebase_db モジュールを使用してください。
-    """
-    if not os.path.exists(db_path):
-        return {}
-    try:
-        with open(db_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Error loading database: {e}")
-        return {}
+class LocalJSONAdapter:
+    def __init__(self, json_path=DB_PATH):
+        self.json_path = json_path
 
-def save_db(data, db_path=DB_PATH):
+    def load(self):
+        if not os.path.exists(self.json_path):
+            return {}
+        try:
+            with open(self.json_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading database: {e}")
+            return {}
+
+    def save(self, data):
+        try:
+            with open(self.json_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+            return True
+        except Exception as e:
+            print(f"Error saving database: {e}")
+            return False
+
+_current_db_adapter = LocalJSONAdapter()
+
+def set_db_adapter(adapter):
     """
-    JSON ファイルにデータベースを保存する。
-    Firebase を使う場合は firebase_db モジュールを使用してください。
+    データ永続化層のアダプターを注入する。
+    Firebase を使う場合は、ここで Firebase 用のアダプターをセットする。
     """
-    try:
-        with open(db_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-        return True
-    except Exception as e:
-        print(f"Error saving database: {e}")
-        return False
+    global _current_db_adapter
+    _current_db_adapter = adapter
+
+def load_db():
+    """設定されたアダプターを使ってデータベースを読み込む"""
+    return _current_db_adapter.load()
+
+def save_db(data):
+    """設定されたアダプターを使ってデータベースを保存する"""
+    return _current_db_adapter.save(data)
 
 def save_and_register_score(processed_pages_list, year, event_name, piece_name, composer, arranger, instrument, score_id=None, base_save_dir="score_data"):
     """
@@ -390,7 +404,7 @@ def save_and_register_score(processed_pages_list, year, event_name, piece_name, 
         page.save(save_path, optimize=True)
 
     save_db(db)
-    return save_dir
+    return save_dir, score_id
 
 def get_profiles_by_piece(piece):
     db = load_db()

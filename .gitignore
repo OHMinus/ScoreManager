@@ -227,3 +227,4 @@ node_modules/
 
 #secret files
 vault
+token.json

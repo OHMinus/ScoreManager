@@ -9,7 +9,8 @@ import json
 import glob
 import firebase_admin
 from firebase_admin import credentials, db as firebase_db
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from PIL import Image
@@ -42,23 +43,28 @@ def initialize_firebase():
 
 
 def initialize_google_drive():
-    """Google Drive API を初期化する"""
-    google_drive_cred_path = os.environ.get('GOOGLE_DRIVE_CRED_PATH')
+    """OAuth 2.0 を使用して Google Drive API を初期化する"""
+    SCOPES = ['https://www.googleapis.com/auth/drive.file']
+    creds = None
     
-    if not google_drive_cred_path:
-        return None
-    
-    try:
-        drive_creds = service_account.Credentials.from_service_account_file(
-            google_drive_cred_path,
-            scopes=['https://www.googleapis.com/auth/drive.file']
-        )
-        drive_service = build('drive', 'v3', credentials=drive_creds)
-        print("✓ Google Drive API initialized.")
-        return drive_service
-    except Exception as e:
-        print(f"✗ Failed to initialize Google Drive: {e}")
-        return None
+    if os.path.exists('token.json'):
+        try:
+            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+        except Exception as e:
+            print(f"✗ Failed to load/refresh token: {e}")
+            return None
+
+    if creds and creds.valid:
+        try:
+            drive_service = build('drive', 'v3', credentials=creds)
+            print("✓ Google Drive API initialized with OAuth 2.0.")
+            return drive_service
+        except Exception as e:
+            print(f"✗ Failed to initialize Google Drive: {e}")
+
+    return None
 
 
 # ==========================================
@@ -72,7 +78,7 @@ def load_db_from_firebase():
     
     try:
         ref = firebase_db.reference('scores')
-        data = ref.get().val()
+        data = ref.get()
         return data if data else {}
     except Exception as e:
         print(f"✗ Failed to load from Firebase: {e}")
@@ -337,4 +343,5 @@ def is_firebase_available():
 
 def is_google_drive_available():
     """Google Drive が利用可能か判定する"""
-    return bool(os.environ.get('GOOGLE_DRIVE_CRED_PATH'))
+    client_secret_path = os.environ.get('GOOGLE_DRIVE_CRED_PATH', 'client_secret.json')
+    return os.path.exists('token.json') or os.path.exists(client_secret_path)

@@ -1,6 +1,7 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, session
 import os
 import glob
+from google_auth_oauthlib.flow import Flow
 import uuid
 import datetime
 import time
@@ -9,9 +10,16 @@ import cv2
 import pytesseract
 import zipfile
 import io
+import urllib.parse
+from googleapiclient.http import MediaIoBaseDownload
+from dotenv import load_dotenv
+
+# dotenv はモジュールの読み込み前に実行する
+if os.path.isfile(".env"):
+    load_dotenv()
+
 import score_api
 import firebase_db
-from dotenv import load_dotenv
 
 app = Flask(__name__)
 app.secret_key = 'score_processor_secret_key'
@@ -23,6 +31,9 @@ GOOGLE_DRIVE_FOLDER_ID = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
 
 # データベースアダプターを初期化
 db_adapter = firebase_db.get_db_adapter(use_firebase=firebase_db.is_firebase_available())
+score_api.set_db_adapter(db_adapter)
+
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # ローカル開発用
 
 TEMP_UPLOAD_DIR = os.path.join('static', 'temp', 'uploads')
 TEMP_PREVIEW_DIR = os.path.join('static', 'temp', 'previews')
@@ -54,6 +65,71 @@ def extract_info_from_header(image_path):
         inst_guess = "".join(c for c in inst_guess if c.isalnum() or c in " -_")
         return piece_guess, inst_guess
     except: return "", ""
+
+@app.route('/login')
+def authorize_drive():
+    client_secret_path = os.environ.get('GOOGLE_DRIVE_CRED_PATH', 'client_secret.json')
+    if not os.path.exists(client_secret_path):
+        flash('Google Drive API credentials (client_secret.json) not found.')
+        return redirect(url_for('index'))
+
+    flow = Flow.from_client_secrets_file(
+        client_secret_path,
+        scopes=['https://www.googleapis.com/auth/drive.file']
+    )
+
+    flow.redirect_uri = url_for('oauth2callback', _external=True)
+
+    authorization_url, state = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes='true'
+    )
+
+    session['state'] = state
+    session['code_verifier'] = flow.code_verifier
+    return redirect(authorization_url)
+
+
+@app.route('/oauth2callback')
+def oauth2callback():
+    client_secret_path = os.environ.get('GOOGLE_DRIVE_CRED_PATH', 'client_secret.json')
+    state = session.get('state')
+
+    if not state:
+        flash('Invalid OAuth state.')
+        return redirect(url_for('index'))
+
+    flow = Flow.from_client_secrets_file(
+        client_secret_path,
+        scopes=['https://www.googleapis.com/auth/drive.file'],
+        state=state
+    )
+    flow.redirect_uri = url_for('oauth2callback', _external=True)
+
+    # URLがhttpの場合は、httpsに強制変換しないと一部環境でエラーになるが、ローカル開発ではhttpを使用
+    authorization_response = request.url
+
+    # PKCE のための code_verifier を復元
+    if 'code_verifier' in session:
+        flow.code_verifier = session['code_verifier']
+
+    try:
+        flow.fetch_token(authorization_response=authorization_response)
+        credentials = flow.credentials
+
+        with open('token.json', 'w') as token_file:
+            token_file.write(credentials.to_json())
+
+        # グローバルの drive_service を再初期化
+        global drive_service
+        drive_service = firebase_db.initialize_google_drive()
+
+        flash('Google Drive 認証が完了しました！')
+    except Exception as e:
+        flash(f'Google Drive 認証に失敗しました: {e}')
+
+    return redirect(url_for('index'))
+
 
 @app.route('/')
 def index():
@@ -188,28 +264,33 @@ def save_score():
 
     try:
         pages = [Image.open(os.path.join(TEMP_PREVIEW_DIR, fname)) for fname in preview_filenames]
-        saved_dir = score_api.save_and_register_score(pages, year, event_name, piece, composer, arranger, instrument, score_id=score_id)
+        saved_dir, saved_score_id = score_api.save_and_register_score(pages, year, event_name, piece, composer, arranger, instrument, score_id=score_id)
         
         # Google Drive にアップロード（オプション）
         if drive_service and GOOGLE_DRIVE_FOLDER_ID:
             # Google Drive上に作る階層構造をリストで定義します
             event_dir_name = f"{year}{event_name}"
             path_components = [event_dir_name, piece, instrument]
-            
+
             # 再帰的にフォルダを確認・生成して、保存先のフォルダIDを取得
             target_folder_id = firebase_db.get_or_create_drive_path(
                 drive_service, GOOGLE_DRIVE_FOLDER_ID, path_components
             )
-            
+
+            urls = []
             if target_folder_id:
                 urls = firebase_db.upload_score_pages_to_google_drive(
-                    saved_dir, score_id or score_api.load_db().get('id', ''), instrument,
+                    saved_dir, saved_score_id, instrument,
                     drive_service, target_folder_id
                 )
             # Firebase にも URL を記録
-            if urls and firebase_db.is_firebase_available():
-                db = firebase_db.get_db_adapter().load()
-                # TODO: DB に URL を記録する処理
+            if urls:
+                db = score_api.load_db()
+                if saved_score_id in db:
+                    if 'instruments' in db[saved_score_id] and instrument in db[saved_score_id]['instruments']:
+                        # dirに加えて、urls リストも保存する
+                        db[saved_score_id]['instruments'][instrument] = urls
+                        score_api.save_db(db)
         
         flash(f'「{piece}」({instrument}) の登録・追加が完了しました！')
         return redirect(url_for('index'))
@@ -265,8 +346,35 @@ def view_score():
                 target_dir = inst['dir']
             break
             
+    # URLs だけが DB に保存されている場合、ローカルにダウンロードする
     if urls is not None:
-         return render_template('view_score.html', details=details, instrument=instrument, urls=urls)
+        target_dir = os.path.join("score_data", score_id, instrument)
+        os.makedirs(target_dir, exist_ok=True)
+
+        image_files = sorted(glob.glob(os.path.join(target_dir, "*.png")))
+
+        # ローカルの画像数が URL の数と一致しない場合は再ダウンロード
+        if len(image_files) != len(urls):
+            for i, url in enumerate(urls):
+                filename = f"{score_id}_{instrument}_page_{i + 1:03d}.png"
+                filepath = os.path.join(target_dir, filename)
+                if not os.path.exists(filepath):
+                    try:
+                        parsed = urllib.parse.urlparse(url)
+                        file_id = urllib.parse.parse_qs(parsed.query).get('id', [None])[0]
+                        if file_id and drive_service:
+                            request_obj = drive_service.files().get_media(fileId=file_id)
+                            fh = io.BytesIO()
+                            downloader = MediaIoBaseDownload(fh, request_obj)
+                            done = False
+                            while done is False:
+                                status, done = downloader.next_chunk()
+                            with open(filepath, 'wb') as f:
+                                f.write(fh.getvalue())
+                        else:
+                            print(f"Could not extract file ID from URL or drive_service not available: {url}")
+                    except Exception as e:
+                        print(f"Error downloading image from Drive API: {e}")
 
     if not target_dir: return redirect(url_for('piece_details', id=score_id))
     
@@ -283,7 +391,10 @@ def score_image(score_id, instrument, filename):
     target_dir = None
     for inst in details['instruments']:
         if inst['name'] == instrument:
-            target_dir = inst['dir']
+            if 'dir' in inst:
+                target_dir = inst['dir']
+            elif 'urls' in inst:
+                target_dir = os.path.join("score_data", score_id, instrument)
             break
             
     if not target_dir or not os.path.exists(os.path.join(target_dir, filename)):
@@ -405,6 +516,4 @@ def rotate_image():
         return jsonify({'success': False, 'error': str(e)}), 500
     
 if __name__ == '__main__':
-    if os.path.isfile(".env"):
-        load_dotenv()
     app.run(host='0.0.0.0', port=5000, debug=True)
