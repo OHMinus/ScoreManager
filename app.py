@@ -84,6 +84,7 @@ def authorize_drive():
     )
 
     session['state'] = state
+    session['code_verifier'] = flow.code_verifier
     return redirect(authorization_url)
 
 
@@ -105,6 +106,10 @@ def oauth2callback():
 
     # URLがhttpの場合は、httpsに強制変換しないと一部環境でエラーになるが、ローカル開発ではhttpを使用
     authorization_response = request.url
+
+    # PKCE のための code_verifier を復元
+    if 'code_verifier' in session:
+        flow.code_verifier = session['code_verifier']
 
     try:
         flow.fetch_token(authorization_response=authorization_response)
