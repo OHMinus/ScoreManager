@@ -51,7 +51,9 @@
             <div id="loading-overlay">
                 <div class="loader"></div>
                 <p>スキャナー稼働・画像処理中...<br><small>※完了してページが更新されるまで触らずにお待ちください</small></p>
+                <p id="progress-text" style="font-size: 1.2em; font-weight: bold; color: #27ae60; margin-top: 10px;"></p>
             </div>
+            <input type="hidden" id="task_id" name="task_id" value="">
 
             <button type="submit" formaction="{{ url_for('scan_execute') }}" class="btn-scan" onclick="showLoading()">
                 🖨️ スキャナーを動かしてページを読み込む
@@ -94,6 +96,24 @@
             var btns = document.getElementsByTagName('button');
             for(var i=0; i<btns.length; i++) btns[i].style.display = 'none';
             document.getElementById('loading-overlay').style.display = 'block';
+
+            // Generate a random task ID
+            var taskId = Math.random().toString(36).substring(2, 15);
+            document.getElementById('task_id').value = taskId;
+
+            // Poll for progress
+            var progressText = document.getElementById('progress-text');
+            var intervalId = setInterval(function() {
+                fetch('/progress/' + taskId)
+                    .then(response => response.json())
+                    .then(data => {
+                        progressText.innerText = data.progress + '%';
+                        if (data.progress >= 100) {
+                            clearInterval(intervalId);
+                        }
+                    })
+                    .catch(err => console.error(err));
+            }, 1000);
         }
     </script>
 </body>
