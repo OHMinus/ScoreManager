@@ -38,10 +38,12 @@ os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # ローカル開発用
 TEMP_UPLOAD_DIR = os.path.join('static', 'temp', 'uploads')
 TEMP_PREVIEW_DIR = os.path.join('static', 'temp', 'previews')
 TEMP_DEBUG_DIR = os.path.join('static', 'temp', 'debug') # 新規追加: デバッグ画像の保存先
+TEMP_UNCROPPED_DIR = os.path.join('static', 'temp', 'uncropped')
 
 os.makedirs(TEMP_UPLOAD_DIR, exist_ok=True)
 os.makedirs(TEMP_PREVIEW_DIR, exist_ok=True)
 os.makedirs(TEMP_DEBUG_DIR, exist_ok=True)
+os.makedirs(TEMP_UNCROPPED_DIR, exist_ok=True)
 
 def clear_temp_dir(directory, max_age_hours=1):
     now = time.time()
@@ -136,6 +138,7 @@ def index():
     clear_temp_dir(TEMP_UPLOAD_DIR)
     clear_temp_dir(TEMP_PREVIEW_DIR)
     clear_temp_dir(TEMP_DEBUG_DIR)
+    clear_temp_dir(TEMP_UNCROPPED_DIR)
     return render_template('index.html')
 
 @app.route('/process', methods=['POST'])
@@ -146,6 +149,7 @@ def process_files():
 
     clear_temp_dir(TEMP_UPLOAD_DIR)
     clear_temp_dir(TEMP_PREVIEW_DIR)
+    clear_temp_dir(TEMP_UNCROPPED_DIR)
     preview_filenames = []
     first_file_path = None
     
@@ -157,11 +161,15 @@ def process_files():
             if i == 0: first_file_path = temp_path
             
             # デバッグディレクトリを指定して処理を実行
-            pages = score_api.process_file_to_1in1(temp_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR)
-            for page in pages:
+            pages_with_uncropped = score_api.process_file_to_1in1(temp_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR)
+            for page, uncropped in pages_with_uncropped:
                 unique_filename = f"{uuid.uuid4().hex}.png"
                 preview_path = os.path.join(TEMP_PREVIEW_DIR, unique_filename)
                 page.save(preview_path, optimize=True)
+
+                uncropped_path = os.path.join(TEMP_UNCROPPED_DIR, unique_filename)
+                cv2.imwrite(uncropped_path, uncropped)
+
                 preview_filenames.append(unique_filename)
                 
         piece_guess, inst_guess = "", ""
@@ -188,11 +196,15 @@ def scan_execute():
         score_api.scan_score_from_epson(temp_scan_path, dpi=score_api.DEFAULT_CONFIG['dpi'], device_name=device_name if device_name else None)
         
         # デバッグディレクトリを指定して処理を実行
-        pages = score_api.process_file_to_1in1(temp_scan_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR)
-        for page in pages:
+        pages_with_uncropped = score_api.process_file_to_1in1(temp_scan_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR)
+        for page, uncropped in pages_with_uncropped:
             unique_filename = f"{uuid.uuid4().hex}.png"
             preview_path = os.path.join(TEMP_PREVIEW_DIR, unique_filename)
             page.save(preview_path, optimize=True)
+
+            uncropped_path = os.path.join(TEMP_UNCROPPED_DIR, unique_filename)
+            cv2.imwrite(uncropped_path, uncropped)
+
             scanned_files.append(unique_filename)
         return render_template('scan.html', device_name=device_name, scanned_files=scanned_files)
     except Exception as e:
@@ -489,6 +501,38 @@ def debug_view():
     filenames = [os.path.basename(f) for f in debug_files]
     return render_template('debug.html', debug_images=filenames)
 
+@app.route('/re_crop', methods=['POST'])
+def re_crop():
+    filename = request.form.get('filename')
+    try:
+        x = float(request.form.get('x'))
+        y = float(request.form.get('y'))
+        w = float(request.form.get('w'))
+        h = float(request.form.get('h'))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': '無効な座標です'}), 400
+
+    if not filename:
+        return jsonify({'success': False, 'error': 'ファイル名が指定されていません'}), 400
+
+    uncropped_filepath = os.path.join(TEMP_UNCROPPED_DIR, filename)
+    preview_filepath = os.path.join(TEMP_PREVIEW_DIR, filename)
+
+    if not os.path.exists(uncropped_filepath):
+        return jsonify({'success': False, 'error': '元の画像が見つかりません'}), 404
+
+    try:
+        uncropped_img = cv2.imread(uncropped_filepath, cv2.IMREAD_GRAYSCALE)
+        if uncropped_img is None:
+            return jsonify({'success': False, 'error': '元の画像を読み込めません'}), 500
+
+        cropped_pil = score_api.crop_margins_and_fit(uncropped_img, score_api.DEFAULT_CONFIG, manual_crop=(x, y, w, h))
+        cropped_pil.save(preview_filepath, optimize=True)
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/rotate_image', methods=['POST'])
 def rotate_image():
     filename = request.form.get('filename')
@@ -498,6 +542,8 @@ def rotate_image():
         return jsonify({'success': False, 'error': 'パラメータが不足しています'}), 400
         
     filepath = os.path.join(TEMP_PREVIEW_DIR, filename)
+    uncropped_filepath = os.path.join(TEMP_UNCROPPED_DIR, filename)
+
     if not os.path.exists(filepath):
         return jsonify({'success': False, 'error': 'ファイルが見つかりません'}), 404
         
@@ -511,6 +557,17 @@ def rotate_image():
             img = img.transpose(Image.ROTATE_180)
             
         img.save(filepath, optimize=True)
+
+        if os.path.exists(uncropped_filepath):
+            u_img = Image.open(uncropped_filepath)
+            if direction == 'left':
+                u_img = u_img.transpose(Image.ROTATE_90)
+            elif direction == 'right':
+                u_img = u_img.transpose(Image.ROTATE_270)
+            elif direction == '180':
+                u_img = u_img.transpose(Image.ROTATE_180)
+            u_img.save(uncropped_filepath)
+
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
