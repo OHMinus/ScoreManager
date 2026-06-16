@@ -6,6 +6,7 @@ from google_auth_oauthlib.flow import Flow
 import uuid
 import datetime
 import time
+import threading
 from PIL import Image
 import cv2
 import pytesseract
@@ -26,6 +27,7 @@ import firebase_db
 app = Flask(__name__)
 
 progress_store = {}
+result_store = {}
 
 @app.route('/progress/<task_id>', methods=['GET'])
 def get_progress(task_id):
@@ -154,41 +156,22 @@ def index():
     clear_temp_dir(TEMP_UNCROPPED_DIR)
     return render_template('index.html')
 
-@app.route('/process', methods=['POST'])
-def process_files():
-    if 'files' not in request.files: return redirect(url_for('index'))
-    files = request.files.getlist('files')
-    if not files or files[0].filename == '': return redirect(url_for('index'))
-
-    task_id = request.form.get('task_id')
-    if task_id:
-        progress_store[task_id] = 0
-
-    clear_temp_dir(TEMP_UPLOAD_DIR)
-    clear_temp_dir(TEMP_PREVIEW_DIR)
-    clear_temp_dir(TEMP_UNCROPPED_DIR)
+def process_images_in_background(task_id, file_paths):
     preview_filenames = []
-    first_file_path = None
+    first_file_path = file_paths[0] if file_paths else None
     
     try:
-        total_files = len(files)
-        for i, file in enumerate(files):
-            if file.filename == '': continue
-            temp_path = os.path.join(TEMP_UPLOAD_DIR, file.filename)
-            file.save(temp_path)
-            if i == 0: first_file_path = temp_path
-            
+        total_files = len(file_paths)
+        for i, temp_path in enumerate(file_paths):
             def progress_cb(p):
                 if task_id:
-                    # Calculate overall progress
                     base_progress = (i / total_files) * 100
                     current_file_progress = (p / 100) * (100 / total_files)
                     overall_p = int(base_progress + current_file_progress)
+                    if overall_p >= 100 and i < total_files - 1:
+                        overall_p = 99
                     progress_store[task_id] = overall_p
-                    if overall_p >= 100:
-                        progress_store.pop(task_id, None)
 
-            # デバッグディレクトリを指定して処理を実行
             pages_with_uncropped = score_api.process_file_to_1in1(temp_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR,progress_callback=progress_cb)
             for page, uncropped in pages_with_uncropped:
                 unique_filename = f"{uuid.uuid4().hex}.png"
@@ -203,13 +186,66 @@ def process_files():
         piece_guess, inst_guess = "", ""
         if first_file_path: piece_guess, inst_guess = extract_info_from_header(first_file_path)
             
-        return render_template('preview.html', previews=preview_filenames, piece_guess=piece_guess, inst_guess=inst_guess,
-                               piece_names=score_api.get_unique_piece_names(), event_names=score_api.get_unique_event_names(),
-                               composers=score_api.get_unique_composers_arrangers()[0], arrangers=score_api.get_unique_composers_arrangers()[1],
-                               current_year=datetime.datetime.now().year)
+        result_store[task_id] = {
+            "success": True,
+            "preview_filenames": preview_filenames,
+            "piece_guess": piece_guess,
+            "inst_guess": inst_guess
+        }
     except Exception as e:
-        flash(f'処理エラー: {str(e)}')
+        result_store[task_id] = {
+            "success": False,
+            "error": str(e)
+        }
+    finally:
+        progress_store[task_id] = 100
+
+@app.route('/process', methods=['POST'])
+def process_files():
+    if 'files' not in request.files:
+        return jsonify({"error": "No files provided"}), 400
+    files = request.files.getlist('files')
+    if not files or files[0].filename == '':
+        return jsonify({"error": "No files provided"}), 400
+
+    task_id = request.form.get('task_id')
+    if not task_id:
+        task_id = uuid.uuid4().hex
+
+    progress_store[task_id] = 0
+
+    clear_temp_dir(TEMP_UPLOAD_DIR)
+    clear_temp_dir(TEMP_PREVIEW_DIR)
+    clear_temp_dir(TEMP_UNCROPPED_DIR)
+
+    file_paths = []
+    for file in files:
+        if file.filename == '': continue
+        temp_path = os.path.join(TEMP_UPLOAD_DIR, file.filename)
+        file.save(temp_path)
+        file_paths.append(temp_path)
+
+    thread = threading.Thread(target=process_images_in_background, args=(task_id, file_paths))
+    thread.start()
+
+    return jsonify({"task_id": task_id, "status": "processing"})
+
+@app.route('/preview_result')
+def preview_result():
+    task_id = request.args.get('task_id')
+    if not task_id or task_id not in result_store:
+        flash('無効なタスクIDです。')
         return redirect(url_for('index'))
+
+    result = result_store.pop(task_id)
+    if not result.get("success"):
+        flash(f'処理エラー: {result.get("error")}')
+        return redirect(url_for('index'))
+
+    return render_template('preview.html', previews=result["preview_filenames"], piece_guess=result["piece_guess"], inst_guess=result["inst_guess"],
+                           piece_names=score_api.get_unique_piece_names(), event_names=score_api.get_unique_event_names(),
+                           composers=score_api.get_unique_composers_arrangers()[0], arrangers=score_api.get_unique_composers_arrangers()[1],
+                           current_year=datetime.datetime.now().year)
     
 @app.route('/scan_ui', methods=['POST'])
 def scan_ui():
