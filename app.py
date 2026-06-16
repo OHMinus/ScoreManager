@@ -420,7 +420,7 @@ def view_score():
                         parsed = urllib.parse.urlparse(url)
                         file_id = urllib.parse.parse_qs(parsed.query).get('id', [None])[0]
                         if file_id and drive_service:
-                            request_obj = drive_service.files().get_media(fileId=file_id)
+                            request_obj = drive_service.files().get_media(fileId=file_id, supportsAllDrives=True)
                             fh = io.BytesIO()
                             downloader = MediaIoBaseDownload(fh, request_obj)
                             done = False

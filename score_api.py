@@ -403,6 +403,8 @@ def save_and_register_score(processed_pages_list, year, event_name, piece_name, 
             score.setdefault('instruments', {})[instrument] = os.path.join(base_save_dir, score_id, instrument)
             
         save_dir = score['instruments'][instrument]
+        if isinstance(save_dir, list):
+            save_dir = os.path.join(base_save_dir, score_id, instrument)
     else:
         score_id = str(uuid.uuid4())
         save_dir = os.path.join(base_save_dir, score_id, instrument)
