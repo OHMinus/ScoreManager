@@ -1,0 +1,44 @@
+name: Pytest
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y tesseract-ocr tesseract-ocr-eng libsm6 libxext6 libxrender-dev libsane
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-playwright flask
+        playwright install chromium
+        playwright install-deps chromium
+    - name: Setup Dummy OAuth Credentials
+      run: |
+        cat << 'INNER_EOF' > client_secret.json
+        {
+          "web": {
+            "client_id": "dummy_client_id.apps.googleusercontent.com",
+            "project_id": "dummy-project",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_secret": "dummy_client_secret"
+          }
+        }
+        INNER_EOF
+    - name: Run app and test
+      run: |
+        export isDebug=1
+        python app.py &
+        sleep 5
+        pytest tests/
