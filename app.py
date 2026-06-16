@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, session
 import os
+os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 import glob
 from google_auth_oauthlib.flow import Flow
 import uuid
@@ -195,7 +196,7 @@ def process_files():
                         progress_store.pop(task_id, None)
 
             # デバッグディレクトリを指定して処理を実行
-            pages_with_uncropped = score_api.process_file_to_1in1(temp_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR)
+            pages_with_uncropped = score_api.process_file_to_1in1(temp_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR,progress_callback=progress_cb)
             for page, uncropped in pages_with_uncropped:
                 unique_filename = f"{uuid.uuid4().hex}.png"
                 preview_path = os.path.join(TEMP_PREVIEW_DIR, unique_filename)
@@ -618,10 +619,15 @@ def rotate_image():
         return jsonify({'success': False, 'error': str(e)}), 500
     
 if __name__ == '__main__':
+    ssl = None;
     if os.environ.get('isDebug'):
         print("⚠️ デバッグモードで起動しています。セキュリティに注意してください。")
         os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
     else:
         app.config['PREFERRED_URL_SCHEME'] = 'https'
         app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
-    app.run(host='0.0.0.0', port=5000, debug=True)
+        if os.environ.get("SSH_CERT"):
+            ssl = (os.environ["SSH_CERT"], os.environ["SSH_KEY"])
+            print("🔒 SSL/TLS 証明書を使用して起動します。")
+
+    app.run(host='0.0.0.0', port=5000, debug=True, ssl_context=ssl)
