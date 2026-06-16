@@ -71,8 +71,13 @@
             <input type="hidden" id="task_id" name="task_id" value="">
         </form>
         <div class="action-box">
-            <p>スキャンする際にGoogle drive にログインするとネットワークを介して共有することができます。</p>
-            <a href="{{ url_for('authorize_drive') }}" class="btn-link" style="background: #e62222;">Login to Google Drive</a>
+            {% if google_logged_in %}
+                <p>✅ Google Drive にログイン済みです。ネットワークを介して共有することができます。</p>
+                <a href="{{ url_for('authorize_drive') }}" class="btn-link" style="background: #e67e22;">別のアカウントで再ログインする</a>
+            {% else %}
+                <p>スキャンする際にGoogle drive にログインするとネットワークを介して共有することができます。</p>
+                <a href="{{ url_for('authorize_drive') }}" class="btn-link" style="background: #e62222;">Login to Google Drive</a>
+            {% endif %}
         </div>
         <h2>2. 楽譜の検索と閲覧</h2>
         <form action="{{ url_for('search_score') }}" method="GET">
