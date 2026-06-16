@@ -203,7 +203,8 @@ def _get_folder_by_name(drive_service, parent_id, folder_name):
         query = f"name='{safe_name}' and '{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
         
         results = drive_service.files().list(
-            q=query, spaces='drive', fields='files(id, name)'
+            q=query, spaces='drive', fields='files(id, name)',
+            supportsAllDrives=True, includeItemsFromAllDrives=True
         ).execute()
         
         items = results.get('files', [])
@@ -244,7 +245,8 @@ def get_or_create_drive_path(drive_service, root_id, path_components):
                     'parents': [current_parent_id]
                 }
                 folder = drive_service.files().create(
-                    body=file_metadata, fields='id'
+                    body=file_metadata, fields='id',
+                    supportsAllDrives=True
                 ).execute()
                 
                 folder_id = folder.get('id')
@@ -291,7 +293,8 @@ def upload_image_to_google_drive(pil_image, filename, drive_service, folder_id):
         file = drive_service.files().create(
             body=file_metadata,
             media_body=media,
-            fields='id'
+            fields='id',
+            supportsAllDrives=True
         ).execute()
         
         file_id = file.get('id')
@@ -299,7 +302,8 @@ def upload_image_to_google_drive(pil_image, filename, drive_service, folder_id):
         # ファイルを公開設定にする
         drive_service.permissions().create(
             fileId=file_id,
-            body={'type': 'anyone', 'role': 'reader'}
+            body={'type': 'anyone', 'role': 'reader'},
+            supportsAllDrives=True
         ).execute()
         
         # 公開 URL を生成
@@ -331,15 +335,29 @@ def upload_score_pages_to_google_drive(score_dir, score_id, instrument, drive_se
         return []
     
     try:
+        # Get list of existing files in the folder to avoid duplicate uploads
+        query = f"'{folder_id}' in parents and trashed=false"
+        results = drive_service.files().list(
+            q=query, spaces='drive', fields='files(id, name)',
+            supportsAllDrives=True, includeItemsFromAllDrives=True
+        ).execute()
+        existing_files = {item['name']: item['id'] for item in results.get('files', [])}
+
         urls = []
         image_files = sorted(glob.glob(os.path.join(score_dir, "*.png")))
         
         for image_file in image_files:
             filename = os.path.basename(image_file)
-            pil_image = Image.open(image_file)
-            _, url = upload_image_to_google_drive(pil_image, filename, drive_service, folder_id)
-            if url:
+            if filename in existing_files:
+                file_id = existing_files[filename]
+                url = f"https://drive.google.com/uc?id={file_id}"
                 urls.append(url)
+                print(f"✓ Skipped existing file on Google Drive: {filename}")
+            else:
+                pil_image = Image.open(image_file)
+                _, url = upload_image_to_google_drive(pil_image, filename, drive_service, folder_id)
+                if url:
+                    urls.append(url)
         
         return urls
     except Exception as e:
