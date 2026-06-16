@@ -118,8 +118,13 @@ def oauth2callback():
     )
     flow.redirect_uri = url_for('oauth2callback', _external=True)
 
-    # URLがhttpの場合は、httpsに強制変換しないと一部環境でエラーになるが、ローカル開発ではhttpを使用
+
+    # 現在のURLを取得
     authorization_response = request.url
+
+    # デバックフラグが立っておらず、http:// で始まっていれば https:// に強制置換
+    if not ("isDebug" in os.environ) and authorization_response.startswith("http://"):
+        authorization_response = authorization_response.replace("http://", "https://", 1)
 
     # PKCE のための code_verifier を復元
     if 'code_verifier' in session:
