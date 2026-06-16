@@ -31,3 +31,15 @@ def test_search_page(page: Page):
 def test_list_page(page: Page):
     page.goto("http://localhost:5000/list")
     expect(page.locator("text=登録済みの楽譜一覧")).to_be_visible()
+
+def test_oauth_login_redirect(page: Page):
+    # Set dummy credentials file path for testing if needed
+    page.goto("http://localhost:5000/")
+
+    # Click the login button
+    with page.expect_navigation() as nav_info:
+        page.locator("text=Login to Google Drive").click()
+
+    # Check if the page redirects to Google's OAuth consent screen
+    # The URL should start with https://accounts.google.com/o/oauth2/auth
+    assert page.url.startswith("https://accounts.google.com/o/oauth2/auth") or page.url.startswith("https://accounts.google.com/signin/oauth")
