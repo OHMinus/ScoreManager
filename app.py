@@ -42,8 +42,6 @@ GOOGLE_DRIVE_FOLDER_ID = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
 db_adapter = firebase_db.get_db_adapter(use_firebase=firebase_db.is_firebase_available())
 score_api.set_db_adapter(db_adapter)
 
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # ローカル開発用
-
 TEMP_UPLOAD_DIR = os.path.join('static', 'temp', 'uploads')
 TEMP_PREVIEW_DIR = os.path.join('static', 'temp', 'previews')
 TEMP_DEBUG_DIR = os.path.join('static', 'temp', 'debug') # 新規追加: デバッグ画像の保存先
@@ -617,6 +615,7 @@ def rotate_image():
 if __name__ == '__main__':
     if os.environ.get('isDebug'):
         print("⚠️ デバッグモードで起動しています。セキュリティに注意してください。")
+        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
     else:
         app.config['PREFERRED_URL_SCHEME'] = 'https'
         app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
