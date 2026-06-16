@@ -78,6 +78,8 @@ def extract_info_from_header(image_path):
 
 @app.route('/login')
 def authorize_drive():
+    if 'GOOGLE_DRIVE_CRED' in os.environ:
+        open('client_secret.json', 'w').write(os.environ['GOOGLE_DRIVE_CRED'])
     client_secret_path = os.environ.get('GOOGLE_DRIVE_CRED_PATH', 'client_secret.json')
     if not os.path.exists(client_secret_path):
         flash('Google Drive API credentials (client_secret.json) not found.')

@@ -26,14 +26,19 @@ def initialize_firebase():
     """Firebase を初期化する"""
     firebase_cred_path = os.environ.get('FIREBASE_CRED_PATH')
     firebase_database_url = os.environ.get('FIREBASE_DATABASE_URL')
-    
-    if not firebase_cred_path or not firebase_database_url:
+    firebase_cred = os.environ.get('FIREBASE_CRED')
+    if (not firebase_cred_path and not firebase_cred) or not firebase_database_url:
         return False
     
     if firebase_admin._apps:
         return True
     
     try:
+        if firebase_cred:
+            # 環境変数から直接証明書を読み込む場合は一時ファイルに保存してから読み込む
+            with open('temp_firebase_cred.json', 'w') as f:
+                f.write(firebase_cred)
+            firebase_cred_path = 'temp_firebase_cred.json'
         cred = credentials.Certificate(firebase_cred_path)
         firebase_admin.initialize_app(cred, {'databaseURL': firebase_database_url})
         print("✓ Firebase initialized.")
