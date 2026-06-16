@@ -8,7 +8,9 @@ import uuid
 import subprocess
 import io
 import requests
+import base64
 
+TREBLE_CLEF_B64 = "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"
 
 DEFAULT_CONFIG = {
     'dpi': 300, 'margin_top': 5, 'margin_bottom': 5, 'margin_left': 5, 'margin_right': 5,
@@ -35,6 +37,79 @@ def generate_debug_summary(steps, out_path):
         canvas_parts.append(resized)
     final_img = np.vstack(canvas_parts)
     cv2.imwrite(out_path, final_img)
+
+def detect_clef_orientation(cv_img):
+    """
+    ト音記号のテンプレートマッチングを行い、正位置か逆さまかを判定する。
+    戻り値: (is_upside_down, max_val_up, max_val_inv)
+    見つからなかった場合は is_upside_down=None を返す。
+    """
+    try:
+        img_data = base64.b64decode(TREBLE_CLEF_B64)
+        nparr = np.frombuffer(img_data, np.uint8)
+        template = cv2.imdecode(nparr, cv2.IMREAD_GRAYSCALE)
+    except Exception as e:
+        print(f"[DEBUG] ト音記号テンプレートの読み込みに失敗しました: {e}")
+        return None, 0, 0
+
+    gray = cv_img if len(cv_img.shape) == 2 else cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 128, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+
+    # テンプレートのスケール調整（複数のスケールを試す）
+    # ト音記号のサイズは解像度によって大きく変わるため
+    scales = [0.3, 0.5, 0.7, 1.0, 1.3, 1.5, 2.0]
+
+    best_upright_val = -1
+    best_inv_val = -1
+
+    h, w = thresh.shape
+
+    # マッチング範囲を絞る（楽譜の端にト音記号があることが多い）
+    # 左端20%と右端20%のみで探索すると高速だが、ここでは全体でマッチングする。
+    # ただし計算量削減のため画像を縮小する
+    scale_factor = 800.0 / max(h, w)
+    if scale_factor < 1.0:
+        thresh_small = cv2.resize(thresh, (int(w * scale_factor), int(h * scale_factor)))
+    else:
+        thresh_small = thresh
+        scale_factor = 1.0
+
+    sh, sw = thresh_small.shape
+
+    for scale in scales:
+        th, tw = template.shape
+        new_th = int(th * scale * scale_factor)
+        new_tw = int(tw * scale * scale_factor)
+
+        if new_th > sh or new_tw > sw or new_th <= 0 or new_tw <= 0:
+            continue
+
+        scaled_template = cv2.resize(template, (new_tw, new_th))
+
+        # 正位置
+        res_upright = cv2.matchTemplate(thresh_small, scaled_template, cv2.TM_CCOEFF_NORMED)
+        _, max_val_up, _, _ = cv2.minMaxLoc(res_upright)
+        if max_val_up > best_upright_val:
+            best_upright_val = max_val_up
+
+        # 逆位置
+        rotated_template = cv2.rotate(scaled_template, cv2.ROTATE_180)
+        res_inv = cv2.matchTemplate(thresh_small, rotated_template, cv2.TM_CCOEFF_NORMED)
+        _, max_val_inv, _, _ = cv2.minMaxLoc(res_inv)
+        if max_val_inv > best_inv_val:
+            best_inv_val = max_val_inv
+
+    print(f"[DEBUG] ト音記号マッチングスコア: 正位置={best_upright_val:.3f}, 逆位置={best_inv_val:.3f}")
+
+    THRESHOLD = 0.4
+    if best_upright_val > THRESHOLD or best_inv_val > THRESHOLD:
+        if best_inv_val > best_upright_val * 1.05:
+            return True, best_upright_val, best_inv_val
+        else:
+            return False, best_upright_val, best_inv_val
+
+    return None, best_upright_val, best_inv_val
+
 
 def ensure_horizontal(cv_img):
     """
@@ -63,12 +138,18 @@ def ensure_horizontal(cv_img):
 def ensure_upright(cv_img, return_debug=False):
     """
     【Split後処理】
-    黒点（インク）の密度を用いて上下を判定する。
-    楽譜は左側に音部記号や調号が集中するため、左側の黒ピクセル密度が必ず高くなる法則を利用。
+    1. ト音記号の画像認識（テンプレートマッチング）によって天地を特定する。
+    2. もしト音記号が見つからなかった場合は、左右の黒点（インク）密度を用いて上下を判定する。
     """
-    print("--- [DEBUG] 上下判定(黒点密度比較)を開始 ---")
+    print("--- [DEBUG] 上下判定を開始 ---")
+
+    is_upside_down = False
+    decision_method = ""
+
+    # まずト音記号のテンプレートマッチングで判定を試みる
+    clef_upside_down, val_up, val_inv = detect_clef_orientation(cv_img)
     
-    # 処理高速化のため画像を縮小
+    # 処理高速化のため画像を縮小（フォールバック用とデバッグ用）
     scale = 800.0 / max(cv_img.shape[0], cv_img.shape[1])
     small = cv2.resize(cv_img, (int(cv_img.shape[1] * scale), int(cv_img.shape[0] * scale)))
     gray = small if len(small.shape) == 2 else cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
@@ -84,26 +165,40 @@ def ensure_upright(cv_img, return_debug=False):
     else:
         content = thresh
         h, w = content.shape
-        
-    # 左側20% と 右側20% のエリアを定義
+
+    left_ink = 0
+    right_ink = 0
     margin = max(10, int(w * 0.20))
-    
-    # 「黒点（インク）の密度（白ピクセルの総数）」を単純にカウント
-    left_ink = np.sum(content[:, :margin]) / 255
-    right_ink = np.sum(content[:, -margin:]) / 255
-    
-    print(f"[DEBUG] 左側のインク量: {left_ink:.0f} | 右側のインク量: {right_ink:.0f}")
-    
-    is_upside_down = False
-    # 右側のインク量が左側よりも多ければ、逆さま（180度反転）とみなす
-    if right_ink > left_ink * 1.05: # ノイズを考慮して5%のバッファを持たせる
-        is_upside_down = True
-        print("[DEBUG] -> 右側の黒点密度が高いため、逆さま(180度反転)と判断しました。\n")
+
+    if clef_upside_down is not None:
+        is_upside_down = clef_upside_down
+        decision_method = f"Clef Matching (Up:{val_up:.2f}, Inv:{val_inv:.2f})"
+        if is_upside_down:
+            print("[DEBUG] -> ト音記号が逆さまに検出されたため、逆さま(180度反転)と判断しました。\n")
+        else:
+            print("[DEBUG] -> ト音記号が正位置に検出されたため、正位置と判断しました。\n")
+    else:
+        print("[DEBUG] -> ト音記号が見つからなかったため、インク密度による判定にフォールバックします。")
+
+        # 左側20% と 右側20% のエリアを定義
+        left_ink = np.sum(content[:, :margin]) / 255
+        right_ink = np.sum(content[:, -margin:]) / 255
+
+        print(f"[DEBUG] 左側のインク量: {left_ink:.0f} | 右側のインク量: {right_ink:.0f}")
+
+        decision_method = "Ink Density"
+        # 右側のインク量が左側よりも多ければ、逆さま（180度反転）とみなす
+        if right_ink > left_ink * 1.05: # ノイズを考慮して5%のバッファを持たせる
+            is_upside_down = True
+            print("[DEBUG] -> 右側の黒点密度が高いため、逆さま(180度反転)と判断しました。\n")
+        else:
+            print("[DEBUG] -> 左側の黒点密度が高いため、正位置と判断しました。\n")
+
+    if is_upside_down:
         res_img = cv2.rotate(cv_img, cv2.ROTATE_180)
     else:
-        print("[DEBUG] -> 左側の黒点密度が高いため、正位置と判断しました。\n")
         res_img = cv_img
-        
+
     # デバッグ用の画像出力
     if return_debug:
         debug_bg = cv2.bitwise_not(content) # 見やすいように白背景・黒インクに反転
@@ -121,6 +216,7 @@ def ensure_upright(cv_img, return_debug=False):
         cv2.putText(debug_color, f"R_INK: {right_ink:.0f}", (w - margin - tw - 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 200), 2)
         
         res_text = "ROTATED 180" if is_upside_down else "UPRIGHT (OK)"
+        res_text += f" [{decision_method}]"
         color = (0, 0, 255) if is_upside_down else (0, 255, 0)
         (tw, th), _ = cv2.getTextSize(res_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 3)
         cv2.rectangle(debug_color, (w//2 - tw//2 - 10, 10), (w//2 + tw//2 + 10, 20 + th + 10), (0, 0, 0), -1)
