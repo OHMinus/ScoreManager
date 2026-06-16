@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, session
 import os
+os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 import glob
 from google_auth_oauthlib.flow import Flow
 import uuid
@@ -89,14 +90,12 @@ def authorize_drive():
         scopes=['https://www.googleapis.com/auth/drive.file']
     )
 
-    flow.redirect_uri = url_for('oauth2callback', _external=True, _scheme='https' if not os.environ.get('isDebug') else 'http')
-
-    if not('isDebug' in os.environ):
-        flow.redirect_uri = str(flow.redirect_uri).replace("http://", "https://", 1)
+    flow.redirect_uri = url_for('oauth2callback', _external=True)
 
     authorization_url, state = flow.authorization_url(
         access_type='offline',
-        include_granted_scopes='true'
+        include_granted_scopes='true',
+        prompt='consent'
     )
 
     print(f"set redirect url as {authorization_url} from {flow.redirect_uri}")
@@ -122,13 +121,8 @@ def oauth2callback():
     )
     flow.redirect_uri = url_for('oauth2callback', _external=True)
 
-
     # 現在のURLを取得
     authorization_response = request.url
-
-    # デバックフラグが立っておらず、http:// で始まっていれば https:// に強制置換
-    if not ("isDebug" in os.environ) and authorization_response.startswith("http://"):
-        authorization_response = authorization_response.replace("http://", "https://", 1)
 
     # PKCE のための code_verifier を復元
     if 'code_verifier' in session:
@@ -195,7 +189,7 @@ def process_files():
                         progress_store.pop(task_id, None)
 
             # デバッグディレクトリを指定して処理を実行
-            pages_with_uncropped = score_api.process_file_to_1in1(temp_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR)
+            pages_with_uncropped = score_api.process_file_to_1in1(temp_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR,progress_callback=progress_cb)
             for page, uncropped in pages_with_uncropped:
                 unique_filename = f"{uuid.uuid4().hex}.png"
                 preview_path = os.path.join(TEMP_PREVIEW_DIR, unique_filename)
@@ -323,6 +317,9 @@ def save_score():
         pages = [Image.open(os.path.join(TEMP_PREVIEW_DIR, fname)) for fname in preview_filenames]
         saved_dir, saved_score_id = score_api.save_and_register_score(pages, year, event_name, piece, composer, arranger, instrument, score_id=score_id)
         
+        print(f"drive_service : {drive_service}")
+        print(f"GOOGLE_DRIVE_FOLDER_ID : {GOOGLE_DRIVE_FOLDER_ID}")
+
         # Google Drive にアップロード（オプション）
         if drive_service and GOOGLE_DRIVE_FOLDER_ID:
             # Google Drive上に作る階層構造をリストで定義します
@@ -420,7 +417,7 @@ def view_score():
                         parsed = urllib.parse.urlparse(url)
                         file_id = urllib.parse.parse_qs(parsed.query).get('id', [None])[0]
                         if file_id and drive_service:
-                            request_obj = drive_service.files().get_media(fileId=file_id)
+                            request_obj = drive_service.files().get_media(fileId=file_id, supportsAllDrives=True)
                             fh = io.BytesIO()
                             downloader = MediaIoBaseDownload(fh, request_obj)
                             done = False
@@ -617,11 +614,22 @@ def rotate_image():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
     
+if not os.environ.get('isDebug'):
+    app.config['PREFERRED_URL_SCHEME'] = 'https'
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+else:
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+
 if __name__ == '__main__':
+    ssl = None;
     if os.environ.get('isDebug'):
         print("⚠️ デバッグモードで起動しています。セキュリティに注意してください。")
         os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
     else:
         app.config['PREFERRED_URL_SCHEME'] = 'https'
         app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
-    app.run(host='0.0.0.0', port=5000, debug=True)
+        if os.environ.get("SSH_CERT"):
+            ssl = (os.environ["SSH_CERT"], os.environ["SSH_KEY"])
+            print("🔒 SSL/TLS 証明書を使用して起動します。")
+
+    app.run(host='0.0.0.0', port=5000, debug=True, ssl_context=ssl)
