@@ -10,6 +10,7 @@ import glob
 import firebase_admin
 from firebase_admin import credentials, db as firebase_db
 from google.oauth2.credentials import Credentials
+from google.oauth2 import service_account
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
@@ -43,8 +44,8 @@ def initialize_firebase():
 
 
 def initialize_google_drive():
-    """OAuth 2.0 を使用して Google Drive API を初期化する"""
-    SCOPES = ['https://www.googleapis.com/auth/drive.file']
+    """OAuth 2.0 を使用して Google Drive API を初期化する。token.json がない場合はサービスアカウントでフォールバックする。"""
+    SCOPES = ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/drive.readonly']
     creds = None
     
     if os.path.exists('token.json'):
@@ -54,12 +55,34 @@ def initialize_google_drive():
                 creds.refresh(Request())
         except Exception as e:
             print(f"✗ Failed to load/refresh token: {e}")
-            return None
+            # Do not return immediately, fallback to service account
+            creds = None
+
+    if not creds or not creds.valid:
+        service_account_path = os.environ.get('GOOGLE_DRIVE_SERVICE_ACCOUNT_PATH', 'service_account.json')
+        client_secret_path = os.environ.get('GOOGLE_DRIVE_CRED_PATH', 'client_secret.json')
+
+        # Check explicit service account path first, then fallback to checking client secret path as SA
+        if os.path.exists(service_account_path):
+            try:
+                creds = service_account.Credentials.from_service_account_file(
+                    service_account_path, scopes=SCOPES)
+                print("✓ Google Drive API initialized with Service Account.")
+            except Exception as e:
+                print(f"✗ Failed to load Service Account: {e}")
+        elif os.path.exists(client_secret_path):
+             # Some users might configure GOOGLE_DRIVE_CRED_PATH with a service account JSON by mistake or design
+             try:
+                 creds = service_account.Credentials.from_service_account_file(
+                     client_secret_path, scopes=SCOPES)
+                 print("✓ Google Drive API initialized with Service Account from client_secret path.")
+             except Exception:
+                 pass # It's probably an OAuth client secret file, so we ignore the error
 
     if creds and creds.valid:
         try:
             drive_service = build('drive', 'v3', credentials=creds)
-            print("✓ Google Drive API initialized with OAuth 2.0.")
+            print("✓ Google Drive API initialized successfully.")
             return drive_service
         except Exception as e:
             print(f"✗ Failed to initialize Google Drive: {e}")
@@ -344,4 +367,5 @@ def is_firebase_available():
 def is_google_drive_available():
     """Google Drive が利用可能か判定する"""
     client_secret_path = os.environ.get('GOOGLE_DRIVE_CRED_PATH', 'client_secret.json')
-    return os.path.exists('token.json') or os.path.exists(client_secret_path)
+    service_account_path = os.environ.get('GOOGLE_DRIVE_SERVICE_ACCOUNT_PATH', 'service_account.json')
+    return os.path.exists('token.json') or os.path.exists(client_secret_path) or os.path.exists(service_account_path)
