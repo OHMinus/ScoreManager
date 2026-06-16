@@ -13,6 +13,7 @@ import io
 import urllib.parse
 from googleapiclient.http import MediaIoBaseDownload
 from dotenv import load_dotenv
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 # dotenv はモジュールの読み込み前に実行する
 if os.path.isfile(".env"):
@@ -90,7 +91,7 @@ def authorize_drive():
         scopes=['https://www.googleapis.com/auth/drive.file']
     )
 
-    flow.redirect_uri = url_for('oauth2callback', _external=True)
+    flow.redirect_uri = url_for('oauth2callback', _external=True, _scheme='https' if not os.environ.get('isDebug') else 'http')
 
     authorization_url, state = flow.authorization_url(
         access_type='offline',
@@ -618,4 +619,5 @@ if __name__ == '__main__':
         print("⚠️ デバッグモードで起動しています。セキュリティに注意してください。")
     else:
         app.config['PREFERRED_URL_SCHEME'] = 'https'
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
     app.run(host='0.0.0.0', port=5000, debug=True)
