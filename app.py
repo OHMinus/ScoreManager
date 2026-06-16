@@ -614,4 +614,8 @@ def rotate_image():
         return jsonify({'success': False, 'error': str(e)}), 500
     
 if __name__ == '__main__':
+    if os.environ.get('isDebug'):
+        print("⚠️ デバッグモードで起動しています。セキュリティに注意してください。")
+    else:
+        app.config['PREFERRED_URL_SCHEME'] = 'https'
     app.run(host='0.0.0.0', port=5000, debug=True)
