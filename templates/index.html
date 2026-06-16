@@ -48,12 +48,12 @@
         {% endwith %}
 
         <h2>1. 楽譜の取り込み</h2>
-        <form method="POST" enctype="multipart/form-data" onsubmit="showLoading()">
+        <form id="uploadForm" method="POST" enctype="multipart/form-data">
             
             <div class="action-box">
                 <label for="files">【方法A】画像ファイルから登録:</label>
                 <input type="file" id="files" name="files" accept="image/*" multiple style="margin-bottom: 10px;">
-                <button type="submit" formaction="{{ url_for('process_files') }}" id="btn-process">ファイルを選択してプレビューへ</button>
+                <button type="button" id="btn-process" onclick="submitProcessForm()">ファイルを選択してプレビューへ</button>
             </div>
 
             <div class="action-box">
@@ -86,6 +86,55 @@
     </div>
 
     <script>
+        function submitProcessForm() {
+            var filesInput = document.getElementById('files');
+            if (filesInput.files.length === 0) {
+                alert("ファイルを選択してください。");
+                return;
+            }
+
+            document.getElementById('btn-process').style.display = 'none';
+            document.getElementById('btn-scan').style.display = 'none';
+            document.getElementById('loading-overlay').style.display = 'flex';
+
+            var formData = new FormData(document.getElementById('uploadForm'));
+
+            fetch('{{ url_for("process_files") }}', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('エラー: ' + data.error);
+                    window.location.reload();
+                    return;
+                }
+
+                var taskId = data.task_id;
+                document.getElementById('task_id').value = taskId;
+
+                var progressText = document.getElementById('progress-text');
+                var intervalId = setInterval(function() {
+                    fetch('/progress/' + taskId)
+                        .then(response => response.json())
+                        .then(progressData => {
+                            progressText.innerText = progressData.progress + '%';
+                            if (progressData.progress >= 100) {
+                                clearInterval(intervalId);
+                                window.location.href = '{{ url_for("preview_result") }}?task_id=' + taskId;
+                            }
+                        })
+                        .catch(err => console.error(err));
+                }, 1000);
+            })
+            .catch(err => {
+                console.error(err);
+                alert("通信エラーが発生しました。");
+                window.location.reload();
+            });
+        }
+
         function showLoading() {
             document.getElementById('btn-process').style.display = 'none';
             document.getElementById('btn-scan').style.display = 'none';
