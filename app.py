@@ -94,7 +94,8 @@ def authorize_drive():
 
     authorization_url, state = flow.authorization_url(
         access_type='offline',
-        include_granted_scopes='true'
+        include_granted_scopes='true',
+        prompt='consent'
     )
 
     print(f"set redirect url as {authorization_url} from {flow.redirect_uri}")
@@ -316,6 +317,9 @@ def save_score():
         pages = [Image.open(os.path.join(TEMP_PREVIEW_DIR, fname)) for fname in preview_filenames]
         saved_dir, saved_score_id = score_api.save_and_register_score(pages, year, event_name, piece, composer, arranger, instrument, score_id=score_id)
         
+        print(f"drive_service : {drive_service}")
+        print(f"GOOGLE_DRIVE_FOLDER_ID : {GOOGLE_DRIVE_FOLDER_ID}")
+
         # Google Drive にアップロード（オプション）
         if drive_service and GOOGLE_DRIVE_FOLDER_ID:
             # Google Drive上に作る階層構造をリストで定義します
