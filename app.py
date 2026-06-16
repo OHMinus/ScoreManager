@@ -91,10 +91,15 @@ def authorize_drive():
 
     flow.redirect_uri = url_for('oauth2callback', _external=True, _scheme='https' if not os.environ.get('isDebug') else 'http')
 
+    if not('isDebug' in os.environ):
+        flow.redirect_uri = str(flow.redirect_uri).replace("http://", "https://", 1)
+
     authorization_url, state = flow.authorization_url(
         access_type='offline',
         include_granted_scopes='true'
     )
+
+    print(f"set redirect url as {authorization_url} from {flow.redirect_uri}")
 
     session['state'] = state
     session['code_verifier'] = flow.code_verifier
