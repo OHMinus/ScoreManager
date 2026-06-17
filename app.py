@@ -263,11 +263,20 @@ def preview_result_old():
     task_id = request.args.get('task_id')
     return preview_result(task_id)
 
-def preview_result(task_id):
+@app.route('/queue/<next>/<task_id>')
+def Queue(next : str,task_id : str):
+    # リダイレクト先URLを生成
+    target_url = url_for(next, task_id=task_id)
+    return render_template('queue.html', target_url=target_url)
+
+def preview_result(task_id,isFirst = False):
     if not task_id or not(task_id in result_store):
         print(result_store)
         flash(f'無効なタスクIDです。{task_id}')
-        return redirect(url_for('index'))
+        if isFirst:
+            return redirect(url_for('Queue',next = "preview_result_new",task_id = task_id))
+        else:
+            return redirect(url_for('index'))
 
     result = result_store.pop(task_id)
     if not result.get("success"):
