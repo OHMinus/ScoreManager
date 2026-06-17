@@ -63,15 +63,33 @@
 
         <hr style="margin-bottom: 30px;">
 
-        <div class="score-grid">
-            {% for filename in filenames %}
-                <div>
-                    <h4 style="color:#7f8c8d; text-align:center; margin-bottom:8px;">Page {{ loop.index }}</h4>
-                    <img src="{{ url_for('score_image', score_id=details.id, instrument=instrument, filename=filename) }}" class="score-page" loading="lazy">
-                </div>
-            {% endfor %}
-        </div>
-        
+        <form action="{{ url_for('update_db_order') }}" method="POST" id="orderForm">
+            <input type="hidden" name="score_id" value="{{ details.id }}">
+            <input type="hidden" name="instrument" value="{{ instrument }}">
+
+            <div style="text-align: center; margin-bottom: 20px;">
+                <button type="submit" class="btn-update" style="background: #2ecc71; color: #fff; padding: 10px 20px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer;">✓ 表示順を更新する</button>
+            </div>
+
+            <div class="score-grid">
+                {% for filename in filenames %}
+                    <div>
+                        <h4 style="color:#7f8c8d; text-align:center; margin-bottom:8px;">Page {{ loop.index }}</h4>
+                        <img src="{{ url_for('score_image', score_id=details.id, instrument=instrument, filename=filename) }}" class="score-page" loading="lazy">
+                        <div style="text-align: center; margin-top: 10px;">
+                            <label style="font-size: 0.9em; color: #555; font-weight: bold;">順番:</label>
+                            <input type="number" name="orders[]" value="{{ loop.index }}" min="1" max="{{ filenames|length }}" style="width: 60px; text-align: center; padding: 6px; border: 1px solid #bdc3c7; border-radius: 4px; font-weight: bold;">
+                            <input type="hidden" name="filenames[]" value="{{ filename }}">
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+
+            <div style="text-align: center; margin-top: 20px;">
+                <button type="submit" class="btn-update" style="background: #2ecc71; color: #fff; padding: 10px 20px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer;">✓ 表示順を更新する</button>
+            </div>
+        </form>
+
         <div style="text-align: center; margin-top: 40px;">
             <a href="#top" style="color: #3498db; text-decoration: none; font-weight: bold;">▲ ページの一番上へ戻る</a>
         </div>
