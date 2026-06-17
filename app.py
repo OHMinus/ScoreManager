@@ -168,7 +168,7 @@ def process_images_in_background(task_id, file_paths):
                     base_progress = (i / total_files) * 100
                     current_file_progress = (p / 100) * (100 / total_files)
                     overall_p = int(base_progress + current_file_progress)
-                    if overall_p >= 100 and i < total_files - 1:
+                    if overall_p >= 100:
                         overall_p = 99
                     progress_store[task_id] = overall_p
 
@@ -266,12 +266,13 @@ def scan_execute():
         
         def progress_cb(p):
             if task_id:
-                progress_store[task_id] = int(p)
-                if p >= 100:
-                    progress_store.pop(task_id, None)
+                overall_p = int(p)
+                if overall_p >= 100:
+                    overall_p = 99
+                progress_store[task_id] = overall_p
 
         # デバッグディレクトリを指定して処理を実行
-        pages_with_uncropped = score_api.process_file_to_1in1(temp_scan_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR)
+        pages_with_uncropped = score_api.process_file_to_1in1(temp_scan_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR, progress_callback=progress_cb)
         for page, uncropped in pages_with_uncropped:
             unique_filename = f"{uuid.uuid4().hex}.png"
             preview_path = os.path.join(TEMP_PREVIEW_DIR, unique_filename)
@@ -285,6 +286,9 @@ def scan_execute():
     except Exception as e:
         flash(f'スキャンエラー: {str(e)}')
         return render_template('scan.html', device_name=device_name, scanned_files=scanned_files)
+    finally:
+        if task_id:
+            progress_store[task_id] = 100
 
 @app.route('/scan_to_preview', methods=['POST'])
 def scan_to_preview():
