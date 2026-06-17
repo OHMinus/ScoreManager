@@ -491,9 +491,10 @@ def save_and_register_score(processed_pages_list, year, event_name, piece_name, 
     
     if score_id and score_id in db:
         score = db[score_id]
-        event_exists = any(e.get('year') == str(year) and e.get('event_name') == str(event_name) for e in score.get('events', []))
-        if not event_exists:
-            score.setdefault('events', []).append({'year': str(year), 'event_name': str(event_name)})
+        if year and event_name:
+            event_exists = any(e.get('year') == str(year) and e.get('event_name') == str(event_name) for e in score.get('events', []))
+            if not event_exists:
+                score.setdefault('events', []).append({'year': str(year), 'event_name': str(event_name)})
             
         if instrument not in score.get('instruments', {}):
             score.setdefault('instruments', {})[instrument] = os.path.join(base_save_dir, score_id, instrument)

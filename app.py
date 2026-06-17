@@ -7,6 +7,7 @@ import uuid
 import datetime
 import time
 import threading
+import concurrent.futures
 from PIL import Image
 import cv2
 import pytesseract
@@ -141,6 +142,7 @@ def oauth2callback():
         global drive_service
         drive_service = firebase_db.initialize_google_drive()
 
+        session['google_logged_in'] = True
         flash('Google Drive 認証が完了しました！')
     except Exception as e:
         flash(f'Google Drive 認証に失敗しました: {e}')
@@ -154,25 +156,32 @@ def index():
     clear_temp_dir(TEMP_PREVIEW_DIR)
     clear_temp_dir(TEMP_DEBUG_DIR)
     clear_temp_dir(TEMP_UNCROPPED_DIR)
-    return render_template('index.html')
+    google_logged_in = session.get('google_logged_in', False)
+    return render_template('index.html', google_logged_in=google_logged_in)
 
 def process_images_in_background(task_id, file_paths):
-    preview_filenames = []
     first_file_path = file_paths[0] if file_paths else None
     
     try:
         total_files = len(file_paths)
-        for i, temp_path in enumerate(file_paths):
+        preview_filenames_list = [[] for _ in range(total_files)]
+        progress_lock = threading.Lock()
+        completed_files = [0]
+
+        def process_single_file(i, temp_path):
+            local_preview_filenames = []
+
             def progress_cb(p):
                 if task_id:
-                    base_progress = (i / total_files) * 100
-                    current_file_progress = (p / 100) * (100 / total_files)
-                    overall_p = int(base_progress + current_file_progress)
-                    if overall_p >= 100 and i < total_files - 1:
-                        overall_p = 99
-                    progress_store[task_id] = overall_p
+                    with progress_lock:
+                        base_progress = (completed_files[0] / total_files) * 100
+                        current_file_progress = (p / 100) * (100 / total_files)
+                        overall_p = int(base_progress + current_file_progress)
+                        if overall_p >= 100 and completed_files[0] < total_files - 1:
+                            overall_p = 99
+                        progress_store[task_id] = overall_p
 
-            pages_with_uncropped = score_api.process_file_to_1in1(temp_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR,progress_callback=progress_cb)
+            pages_with_uncropped = score_api.process_file_to_1in1(temp_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR, progress_callback=progress_cb)
             for page, uncropped in pages_with_uncropped:
                 unique_filename = f"{uuid.uuid4().hex}.png"
                 preview_path = os.path.join(TEMP_PREVIEW_DIR, unique_filename)
@@ -181,11 +190,25 @@ def process_images_in_background(task_id, file_paths):
                 uncropped_path = os.path.join(TEMP_UNCROPPED_DIR, unique_filename)
                 cv2.imwrite(uncropped_path, uncropped)
 
-                preview_filenames.append(unique_filename)
+                local_preview_filenames.append(unique_filename)
+
+            with progress_lock:
+                completed_files[0] += 1
+
+            return i, local_preview_filenames
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [executor.submit(process_single_file, i, temp_path) for i, temp_path in enumerate(file_paths)]
+            for future in concurrent.futures.as_completed(futures):
+                idx, local_preview_filenames = future.result()
+                preview_filenames_list[idx] = local_preview_filenames
+
+        preview_filenames = [filename for sublist in preview_filenames_list for filename in sublist]
                 
         piece_guess, inst_guess = "", ""
-        if first_file_path: piece_guess, inst_guess = extract_info_from_header(first_file_path)
-            
+        if first_file_path:
+            piece_guess, inst_guess = extract_info_from_header(first_file_path)
+        print(f"success convertion (task #{task_id})")
         result_store[task_id] = {
             "success": True,
             "preview_filenames": preview_filenames,
@@ -227,14 +250,23 @@ def process_files():
 
     thread = threading.Thread(target=process_images_in_background, args=(task_id, file_paths))
     thread.start()
-
+    print(progress_store)
     return jsonify({"task_id": task_id, "status": "processing"})
 
+
+@app.route('/preview/<task_id>')
+def preview_result_new(task_id : str):
+    return preview_result(task_id)
+
 @app.route('/preview_result')
-def preview_result():
+def preview_result_old():
     task_id = request.args.get('task_id')
-    if not task_id or task_id not in result_store:
-        flash('無効なタスクIDです。')
+    return preview_result(task_id)
+
+def preview_result(task_id):
+    if not task_id or not(task_id in result_store):
+        print(result_store)
+        flash(f'無効なタスクIDです。{task_id}')
         return redirect(url_for('index'))
 
     result = result_store.pop(task_id)
@@ -266,12 +298,13 @@ def scan_execute():
         
         def progress_cb(p):
             if task_id:
-                progress_store[task_id] = int(p)
-                if p >= 100:
-                    progress_store.pop(task_id, None)
+                overall_p = int(p)
+                if overall_p >= 100:
+                    overall_p = 99
+                progress_store[task_id] = overall_p
 
         # デバッグディレクトリを指定して処理を実行
-        pages_with_uncropped = score_api.process_file_to_1in1(temp_scan_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR)
+        pages_with_uncropped = score_api.process_file_to_1in1(temp_scan_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR, progress_callback=progress_cb)
         for page, uncropped in pages_with_uncropped:
             unique_filename = f"{uuid.uuid4().hex}.png"
             preview_path = os.path.join(TEMP_PREVIEW_DIR, unique_filename)
@@ -285,6 +318,9 @@ def scan_execute():
     except Exception as e:
         flash(f'スキャンエラー: {str(e)}')
         return render_template('scan.html', device_name=device_name, scanned_files=scanned_files)
+    finally:
+        if task_id:
+            progress_store[task_id] = 100
 
 @app.route('/scan_to_preview', methods=['POST'])
 def scan_to_preview():
@@ -334,7 +370,11 @@ def save_score():
     preview_filenames = request.form.getlist('previews')
     save_mode = request.form.get('save_mode')
 
-    if not save_mode or not piece or not instrument or not year or not event_name:
+    if not save_mode or not piece or not instrument:
+        flash('必須項目が入力されていません。')
+        return redirect(url_for('index'))
+
+    if save_mode == 'new' and (not year or not event_name):
         flash('必須項目が入力されていません。')
         return redirect(url_for('index'))
 
@@ -358,8 +398,20 @@ def save_score():
 
         # Google Drive にアップロード（オプション）
         if drive_service and GOOGLE_DRIVE_FOLDER_ID:
+            # 既存のイベントからフォルダを特定するか、新規作成する
+            # year / event_name が提供されていない場合、直近のイベントを利用する
+            actual_year = year
+            actual_event_name = event_name
+            if not actual_year or not actual_event_name:
+                db = score_api.load_db()
+                if saved_score_id in db and db[saved_score_id].get('events'):
+                    # events はソートされている前提 (または最新のものを使う)
+                    latest_event = db[saved_score_id]['events'][0]
+                    actual_year = latest_event.get('year', '')
+                    actual_event_name = latest_event.get('event_name', '')
+
             # Google Drive上に作る階層構造をリストで定義します
-            event_dir_name = f"{year}{event_name}"
+            event_dir_name = f"{actual_year}{actual_event_name}"
             path_components = [event_dir_name, piece, instrument]
 
             # 再帰的にフォルダを確認・生成して、保存先のフォルダIDを取得
@@ -445,7 +497,7 @@ def view_score():
 
         # ローカルの画像数が URL の数と一致しない場合は再ダウンロード
         if len(image_files) != len(urls):
-            for i, url in enumerate(urls):
+            def download_single_file(i, url):
                 filename = f"{score_id}_{instrument}_page_{i + 1:03d}.png"
                 filepath = os.path.join(target_dir, filename)
                 if not os.path.exists(filepath):
@@ -465,6 +517,10 @@ def view_score():
                             print(f"Could not extract file ID from URL or drive_service not available: {url}")
                     except Exception as e:
                         print(f"Error downloading image from Drive API: {e}")
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = [executor.submit(download_single_file, i, url) for i, url in enumerate(urls)]
+                concurrent.futures.wait(futures)
 
     if not target_dir: return redirect(url_for('piece_details', id=score_id))
     

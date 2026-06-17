@@ -16,6 +16,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from PIL import Image
 import io
+import concurrent.futures
 
 
 # ==========================================
@@ -343,22 +344,28 @@ def upload_score_pages_to_google_drive(score_dir, score_id, instrument, drive_se
         ).execute()
         existing_files = {item['name']: item['id'] for item in results.get('files', [])}
 
-        urls = []
         image_files = sorted(glob.glob(os.path.join(score_dir, "*.png")))
-        
-        for image_file in image_files:
+        urls_list = [None] * len(image_files)
+
+        def process_upload(i, image_file):
             filename = os.path.basename(image_file)
             if filename in existing_files:
                 file_id = existing_files[filename]
                 url = f"https://drive.google.com/uc?id={file_id}"
-                urls.append(url)
                 print(f"✓ Skipped existing file on Google Drive: {filename}")
+                return i, url
             else:
                 pil_image = Image.open(image_file)
                 _, url = upload_image_to_google_drive(pil_image, filename, drive_service, folder_id)
-                if url:
-                    urls.append(url)
+                return i, url
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [executor.submit(process_upload, i, img_file) for i, img_file in enumerate(image_files)]
+            for future in concurrent.futures.as_completed(futures):
+                idx, url = future.result()
+                urls_list[idx] = url
         
+        urls = [url for url in urls_list if url is not None]
         return urls
     except Exception as e:
         print(f"✗ Failed to upload score pages: {e}")
