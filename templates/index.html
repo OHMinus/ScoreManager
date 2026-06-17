@@ -127,7 +127,8 @@
                             progressText.innerText = progressData.progress + '%';
                             if (progressData.progress >= 100) {
                                 clearInterval(intervalId);
-                                window.location.href = '{{ url_for("preview_result") }}?task_id=' + taskId;
+                                const url = "{{ url_for('preview_result_new', task_id='tmp') }}";
+                                window.location.href = url.replace('tmp', taskId);
                             }
                         })
                         .catch(err => console.error(err));

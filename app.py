@@ -206,8 +206,9 @@ def process_images_in_background(task_id, file_paths):
         preview_filenames = [filename for sublist in preview_filenames_list for filename in sublist]
                 
         piece_guess, inst_guess = "", ""
-        if first_file_path: piece_guess, inst_guess = extract_info_from_header(first_file_path)
-            
+        if first_file_path:
+            piece_guess, inst_guess = extract_info_from_header(first_file_path)
+        print(f"success convertion (task #{task_id})")
         result_store[task_id] = {
             "success": True,
             "preview_filenames": preview_filenames,
@@ -249,14 +250,23 @@ def process_files():
 
     thread = threading.Thread(target=process_images_in_background, args=(task_id, file_paths))
     thread.start()
-
+    print(progress_store)
     return jsonify({"task_id": task_id, "status": "processing"})
 
+
+@app.route('/preview/<task_id>')
+def preview_result_new(task_id : str):
+    return preview_result(task_id)
+
 @app.route('/preview_result')
-def preview_result():
+def preview_result_old():
     task_id = request.args.get('task_id')
-    if not task_id or task_id not in result_store:
-        flash('無効なタスクIDです。')
+    return preview_result(task_id)
+
+def preview_result(task_id):
+    if not task_id or not(task_id in result_store):
+        print(result_store)
+        flash(f'無効なタスクIDです。{task_id}')
         return redirect(url_for('index'))
 
     result = result_store.pop(task_id)
