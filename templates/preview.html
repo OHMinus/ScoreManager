@@ -355,19 +355,21 @@
                 <input type="text" name="instrument" value="{{ inst_guess }}" required placeholder="例: Flute 1">
             </div>
 
-            <div class="form-group">
-                <label>行事（イベント）名</label>
-                <input type="text" name="event_name" list="event_list" required placeholder="例: 第1回定期演奏会">
-                <datalist id="event_list">
-                    {% for ev in event_names %}
-                        <option value="{{ ev }}">
-                    {% endfor %}
-                </datalist>
-            </div>
+            <div id="eventFields">
+                <div class="form-group">
+                    <label>行事（イベント）名</label>
+                    <input type="text" id="event_name_input" name="event_name" list="event_list" required placeholder="例: 第1回定期演奏会">
+                    <datalist id="event_list">
+                        {% for ev in event_names %}
+                            <option value="{{ ev }}">
+                        {% endfor %}
+                    </datalist>
+                </div>
 
-            <div class="form-group">
-                <label>年度 (西暦)</label>
-                <input type="number" name="year" value="{{ current_year }}" required>
+                <div class="form-group">
+                    <label>年度 (西暦)</label>
+                    <input type="number" id="year_input" name="year" value="{{ current_year }}" required>
+                </div>
             </div>
 
             <div id="hidden-previews-container">
@@ -445,6 +447,9 @@
         const pieceInput = document.getElementById('pieceInput');
         const profileSelection = document.getElementById('profileSelection');
         const newPieceFields = document.getElementById('newPieceFields');
+        const eventFields = document.getElementById('eventFields');
+        const eventNameInput = document.getElementById('event_name_input');
+        const yearInput = document.getElementById('year_input');
 
         // 右ペインの順序更新フォーム用隠しフィールドを連動させる
         pieceInput.addEventListener('input', function() {
@@ -511,8 +516,18 @@
             const labelEl = document.getElementById(labelId);
             if (labelEl) labelEl.classList.add('selected');
 
-            // 「新規」のときだけ作曲者・編曲者入力欄を表示
-            newPieceFields.style.display = (mode === 'new') ? 'block' : 'none';
+            // 「新規」のときだけ作曲者・編曲者入力欄、およびイベント入力欄を表示
+            if (mode === 'new') {
+                newPieceFields.style.display = 'block';
+                eventFields.style.display = 'block';
+                eventNameInput.required = true;
+                yearInput.required = true;
+            } else {
+                newPieceFields.style.display = 'none';
+                eventFields.style.display = 'none';
+                eventNameInput.required = false;
+                yearInput.required = false;
+            }
         }
 
         // ページ読み込み時に一度プロファイルを検索する (推測された曲名が入っている場合のため)
