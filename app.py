@@ -334,7 +334,11 @@ def save_score():
     preview_filenames = request.form.getlist('previews')
     save_mode = request.form.get('save_mode')
 
-    if not save_mode or not piece or not instrument or not year or not event_name:
+    if not save_mode or not piece or not instrument:
+        flash('必須項目が入力されていません。')
+        return redirect(url_for('index'))
+
+    if save_mode == 'new' and (not year or not event_name):
         flash('必須項目が入力されていません。')
         return redirect(url_for('index'))
 
@@ -358,8 +362,20 @@ def save_score():
 
         # Google Drive にアップロード（オプション）
         if drive_service and GOOGLE_DRIVE_FOLDER_ID:
+            # 既存のイベントからフォルダを特定するか、新規作成する
+            # year / event_name が提供されていない場合、直近のイベントを利用する
+            actual_year = year
+            actual_event_name = event_name
+            if not actual_year or not actual_event_name:
+                db = score_api.load_db()
+                if saved_score_id in db and db[saved_score_id].get('events'):
+                    # events はソートされている前提 (または最新のものを使う)
+                    latest_event = db[saved_score_id]['events'][0]
+                    actual_year = latest_event.get('year', '')
+                    actual_event_name = latest_event.get('event_name', '')
+
             # Google Drive上に作る階層構造をリストで定義します
-            event_dir_name = f"{year}{event_name}"
+            event_dir_name = f"{actual_year}{actual_event_name}"
             path_components = [event_dir_name, piece, instrument]
 
             # 再帰的にフォルダを確認・生成して、保存先のフォルダIDを取得
