@@ -141,6 +141,7 @@ def oauth2callback():
         global drive_service
         drive_service = firebase_db.initialize_google_drive()
 
+        session['google_logged_in'] = True
         flash('Google Drive 認証が完了しました！')
     except Exception as e:
         flash(f'Google Drive 認証に失敗しました: {e}')
@@ -154,7 +155,8 @@ def index():
     clear_temp_dir(TEMP_PREVIEW_DIR)
     clear_temp_dir(TEMP_DEBUG_DIR)
     clear_temp_dir(TEMP_UNCROPPED_DIR)
-    return render_template('index.html')
+    google_logged_in = session.get('google_logged_in', False)
+    return render_template('index.html', google_logged_in=google_logged_in)
 
 def process_images_in_background(task_id, file_paths):
     preview_filenames = []
