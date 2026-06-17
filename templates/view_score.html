@@ -80,6 +80,7 @@
                             <label style="font-size: 0.9em; color: #555; font-weight: bold;">順番:</label>
                             <input type="number" name="orders[]" value="{{ loop.index }}" min="1" max="{{ filenames|length }}" style="width: 60px; text-align: center; padding: 6px; border: 1px solid #bdc3c7; border-radius: 4px; font-weight: bold;">
                             <input type="hidden" name="filenames[]" value="{{ filename }}">
+                            <button type="button" onclick="deletePage('{{ filename }}')" style="background: #e74c3c; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-weight: bold; cursor: pointer; margin-left: 10px;">削除</button>
                         </div>
                     </div>
                 {% endfor %}
@@ -94,5 +95,36 @@
             <a href="#top" style="color: #3498db; text-decoration: none; font-weight: bold;">▲ ページの一番上へ戻る</a>
         </div>
     </div>
+
+    <script>
+        function deletePage(filename) {
+            if (confirm(`このページ (${filename}) を削除してもよろしいですか？\n※この操作は取り消せません。`)) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = '{{ url_for("delete_db_page") }}';
+
+                const scoreInput = document.createElement('input');
+                scoreInput.type = 'hidden';
+                scoreInput.name = 'score_id';
+                scoreInput.value = '{{ details.id }}';
+                form.appendChild(scoreInput);
+
+                const instInput = document.createElement('input');
+                instInput.type = 'hidden';
+                instInput.name = 'instrument';
+                instInput.value = '{{ instrument }}';
+                form.appendChild(instInput);
+
+                const fileInput = document.createElement('input');
+                fileInput.type = 'hidden';
+                fileInput.name = 'filename';
+                fileInput.value = filename;
+                form.appendChild(fileInput);
+
+                document.body.appendChild(form);
+                form.submit();
+            }
+        }
+    </script>
 </body>
 </html>
