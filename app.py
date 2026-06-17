@@ -7,6 +7,7 @@ import uuid
 import datetime
 import time
 import threading
+import concurrent.futures
 from PIL import Image
 import cv2
 import pytesseract
@@ -159,22 +160,28 @@ def index():
     return render_template('index.html', google_logged_in=google_logged_in)
 
 def process_images_in_background(task_id, file_paths):
-    preview_filenames = []
     first_file_path = file_paths[0] if file_paths else None
     
     try:
         total_files = len(file_paths)
-        for i, temp_path in enumerate(file_paths):
+        preview_filenames_list = [[] for _ in range(total_files)]
+        progress_lock = threading.Lock()
+        completed_files = [0]
+
+        def process_single_file(i, temp_path):
+            local_preview_filenames = []
+
             def progress_cb(p):
                 if task_id:
-                    base_progress = (i / total_files) * 100
-                    current_file_progress = (p / 100) * (100 / total_files)
-                    overall_p = int(base_progress + current_file_progress)
-                    if overall_p >= 100:
-                        overall_p = 99
-                    progress_store[task_id] = overall_p
+                    with progress_lock:
+                        base_progress = (completed_files[0] / total_files) * 100
+                        current_file_progress = (p / 100) * (100 / total_files)
+                        overall_p = int(base_progress + current_file_progress)
+                        if overall_p >= 100 and completed_files[0] < total_files - 1:
+                            overall_p = 99
+                        progress_store[task_id] = overall_p
 
-            pages_with_uncropped = score_api.process_file_to_1in1(temp_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR,progress_callback=progress_cb)
+            pages_with_uncropped = score_api.process_file_to_1in1(temp_path, score_api.DEFAULT_CONFIG, debug_out_dir=TEMP_DEBUG_DIR, progress_callback=progress_cb)
             for page, uncropped in pages_with_uncropped:
                 unique_filename = f"{uuid.uuid4().hex}.png"
                 preview_path = os.path.join(TEMP_PREVIEW_DIR, unique_filename)
@@ -183,7 +190,20 @@ def process_images_in_background(task_id, file_paths):
                 uncropped_path = os.path.join(TEMP_UNCROPPED_DIR, unique_filename)
                 cv2.imwrite(uncropped_path, uncropped)
 
-                preview_filenames.append(unique_filename)
+                local_preview_filenames.append(unique_filename)
+
+            with progress_lock:
+                completed_files[0] += 1
+
+            return i, local_preview_filenames
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [executor.submit(process_single_file, i, temp_path) for i, temp_path in enumerate(file_paths)]
+            for future in concurrent.futures.as_completed(futures):
+                idx, local_preview_filenames = future.result()
+                preview_filenames_list[idx] = local_preview_filenames
+
+        preview_filenames = [filename for sublist in preview_filenames_list for filename in sublist]
                 
         piece_guess, inst_guess = "", ""
         if first_file_path: piece_guess, inst_guess = extract_info_from_header(first_file_path)
@@ -467,7 +487,7 @@ def view_score():
 
         # ローカルの画像数が URL の数と一致しない場合は再ダウンロード
         if len(image_files) != len(urls):
-            for i, url in enumerate(urls):
+            def download_single_file(i, url):
                 filename = f"{score_id}_{instrument}_page_{i + 1:03d}.png"
                 filepath = os.path.join(target_dir, filename)
                 if not os.path.exists(filepath):
@@ -487,6 +507,10 @@ def view_score():
                             print(f"Could not extract file ID from URL or drive_service not available: {url}")
                     except Exception as e:
                         print(f"Error downloading image from Drive API: {e}")
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = [executor.submit(download_single_file, i, url) for i, url in enumerate(urls)]
+                concurrent.futures.wait(futures)
 
     if not target_dir: return redirect(url_for('piece_details', id=score_id))
     
