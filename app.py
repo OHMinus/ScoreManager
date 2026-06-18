@@ -17,6 +17,7 @@ import urllib.parse
 from googleapiclient.http import MediaIoBaseDownload
 from dotenv import load_dotenv
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.utils import secure_filename
 
 # dotenv はモジュールの読み込み前に実行する
 if os.path.isfile(".env"):
@@ -556,6 +557,137 @@ def score_image(score_id, instrument, filename):
         return "Not found", 404
         
     return send_file(os.path.join(target_dir, filename))
+
+@app.route('/update_db_order', methods=['POST'])
+def update_db_order():
+    score_id = request.form.get('score_id')
+    instrument = request.form.get('instrument')
+    filenames = request.form.getlist('filenames[]')
+    orders = request.form.getlist('orders[]')
+
+    if not score_id or not instrument:
+        flash('必要な情報が不足しています。')
+        return redirect(url_for('score_list'))
+
+    try:
+        # Sort based on specified orders
+        paired = [(int(o), f) for f, o in zip(filenames, orders)]
+        paired.sort(key=lambda x: x[0])
+        sorted_filenames = [f for _, f in paired]
+
+        db = score_api.load_db()
+        if score_id in db:
+            score = db[score_id]
+            if 'instruments' in score and instrument in score['instruments']:
+                target_dir = score['instruments'][instrument]
+
+                if isinstance(target_dir, list):
+                    # It's a list of URLs
+                    urls_map = {f: url for f, url in zip(filenames, target_dir)}
+                    new_urls = [urls_map[f] for f in sorted_filenames]
+                    score['instruments'][instrument] = new_urls
+                    score_api.save_db(db)
+
+                    # Also rename local cached files if they exist
+                    local_dir = os.path.join("score_data", score_id, instrument)
+                    if os.path.exists(local_dir):
+                        # Create temporary mapping
+                        temp_map = {}
+                        for i, old_fname in enumerate(sorted_filenames):
+                            secure_old_fname = secure_filename(old_fname)
+                            ext = os.path.splitext(secure_old_fname)[1] or '.png'
+                            old_path = os.path.join(local_dir, secure_old_fname)
+                            if os.path.exists(old_path):
+                                temp_path = os.path.join(local_dir, f"temp_{uuid.uuid4().hex}{ext}")
+                                os.rename(old_path, temp_path)
+                                temp_map[temp_path] = f"{score_id}_{instrument}_page_{i + 1:03d}{ext}"
+
+                        # Rename to final names
+                        for temp_path, new_fname in temp_map.items():
+                            new_path = os.path.join(local_dir, new_fname)
+                            os.rename(temp_path, new_path)
+
+                else:
+                    # It's a local directory path
+                    local_dir = target_dir
+                    if os.path.exists(local_dir):
+                        # Create temporary mapping
+                        temp_map = {}
+                        for i, old_fname in enumerate(sorted_filenames):
+                            secure_old_fname = secure_filename(old_fname)
+                            ext = os.path.splitext(secure_old_fname)[1] or '.png'
+                            old_path = os.path.join(local_dir, secure_old_fname)
+                            if os.path.exists(old_path):
+                                temp_path = os.path.join(local_dir, f"temp_{uuid.uuid4().hex}{ext}")
+                                os.rename(old_path, temp_path)
+                                temp_map[temp_path] = f"page_{i + 1:03d}{ext}"
+
+                        # Rename to final names
+                        for temp_path, new_fname in temp_map.items():
+                            new_path = os.path.join(local_dir, new_fname)
+                            os.rename(temp_path, new_path)
+
+        flash('ページの順番を更新しました。')
+    except ValueError:
+        flash('順序には数値を入力してください。')
+    except Exception as e:
+        flash(f'順番の更新中にエラーが発生しました: {str(e)}')
+
+    return redirect(url_for('view_score', id=score_id, instrument=instrument))
+
+@app.route('/delete_db_page', methods=['POST'])
+def delete_db_page():
+    score_id = request.form.get('score_id')
+    instrument = request.form.get('instrument')
+    filename_to_delete = request.form.get('filename')
+
+    if not score_id or not instrument or not filename_to_delete:
+        flash('必要な情報が不足しています。')
+        return redirect(url_for('score_list'))
+
+    try:
+        secure_target_fname = secure_filename(filename_to_delete)
+        db = score_api.load_db()
+        if score_id in db:
+            score = db[score_id]
+            if 'instruments' in score and instrument in score['instruments']:
+                target_dir = score['instruments'][instrument]
+
+                if isinstance(target_dir, list):
+                    # It's a list of URLs
+                    # Remove the URL that corresponds to the filename we are deleting
+                    # We know the index of the file in the local cache matches the index in the URL list
+                    local_dir = os.path.join("score_data", score_id, instrument)
+                    if os.path.exists(local_dir):
+                        all_files = sorted(glob.glob(os.path.join(local_dir, "*.png")))
+                        filenames_only = [os.path.basename(f) for f in all_files]
+
+                        if secure_target_fname in filenames_only:
+                            index_to_remove = filenames_only.index(secure_target_fname)
+
+                            if index_to_remove < len(target_dir):
+                                target_dir.pop(index_to_remove)
+                                score_api.save_db(db)
+
+                            # Delete local file
+                            target_path = os.path.join(local_dir, secure_target_fname)
+                            if os.path.exists(target_path):
+                                os.remove(target_path)
+
+                else:
+                    # It's a local directory path
+                    local_dir = target_dir
+                    if os.path.exists(local_dir):
+                        target_path = os.path.join(local_dir, secure_target_fname)
+                        if os.path.exists(target_path):
+                            os.remove(target_path)
+
+        flash(f'ページ ({secure_target_fname}) を削除しました。')
+    except Exception as e:
+        flash(f'ページの削除中にエラーが発生しました: {str(e)}')
+
+    return redirect(url_for('view_score', id=score_id, instrument=instrument))
+
 
 @app.route('/update_piece_info', methods=['POST'])
 def update_piece_info():
