@@ -664,23 +664,12 @@ def search_pieces_by_keyword(keyword):
             })
     return sorted(results, key=lambda x: x['piece'])
 
-def apply_layout(directory, mode='booklet', orientation='portrait', booklet_dir='left', dpi=300, urls=None):
+def apply_layout(directory, mode='booklet', orientation='portrait', booklet_dir='left', dpi=300):
     pages = []
-    if urls:
-        for url in urls:
-            try:
-                 response = requests.get(url)
-                 response.raise_for_status()
-                 pages.append(Image.open(io.BytesIO(response.content)))
-            except Exception as e:
-                 print(f"Error downloading image from Drive: {e}")
-                 raise ValueError(f"画像のダウンロードに失敗しました: {url}")
-        if not pages: raise ValueError(f"画像がありません")
-    else:
-        if not os.path.exists(directory): raise FileNotFoundError(f"ディレクトリが見つかりません: {directory}")
-        image_files = sorted(glob.glob(os.path.join(directory, "*.png")))
-        if not image_files: raise ValueError(f"画像がありません: {directory}")
-        pages = [Image.open(f) for f in image_files]
+    if not os.path.exists(directory): raise FileNotFoundError(f"ディレクトリが見つかりません: {directory}")
+    image_files = sorted(glob.glob(os.path.join(directory, "*.png")))
+    if not image_files: raise ValueError(f"画像がありません: {directory}")
+    pages = [Image.open(f) for f in image_files]
     output_pages = []
 
     def create_a3(p1, p2):
@@ -710,8 +699,8 @@ def apply_layout(directory, mode='booklet', orientation='portrait', booklet_dir=
             output_pages.append(create_a3(pages[idx1], pages[idx2]))
     return output_pages
 
-def layout_and_print_score(directory, mode='booklet', orientation='portrait', printer_name=None, booklet_dir='left', dpi=300, urls=None):
-    output_pages = apply_layout(directory, mode, orientation, booklet_dir, dpi, urls=urls)
+def layout_and_print_score(directory, mode='booklet', orientation='portrait', printer_name=None, booklet_dir='left', dpi=300):
+    output_pages = apply_layout(directory, mode, orientation, booklet_dir, dpi)
     temp_pdf_path = "/tmp/score_print_temp.pdf"
     if output_pages:
         output_pages[0].save(temp_pdf_path, save_all=True, append_images=output_pages[1:], format='PDF', resolution=dpi)

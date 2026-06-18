@@ -38,6 +38,16 @@
         <h2 style="text-align: center; color: #34495e; margin-top: 0;">🎼 {{ instrument }}</h2>
         <p style="text-align: center; color: #666;">全 {{ filenames|length }} ページ</p>
 
+        {% if not has_urls %}
+        <form action="{{ url_for('upload_to_drive') }}" method="POST" class="print-box" style="background: #fff3cd; border-color: #ffeeba;">
+            <h3 style="margin: 0; color: #856404; display: flex; align-items: center;">☁️ Google Driveへアップロード</h3>
+            <input type="hidden" name="score_id" value="{{ details.id }}">
+            <input type="hidden" name="instrument" value="{{ instrument }}">
+            <p style="margin: 0; color: #666; font-size: 0.9em;">この楽譜はローカルにのみ存在します。</p>
+            <button type="submit" style="background: #28a745;">Google Drive にアップロード</button>
+        </form>
+        {% endif %}
+
         <form action="{{ url_for('output_action') }}" method="POST" class="print-box">
             <h3 style="margin: 0; color: #2980b9; display: flex; align-items: center;">🖨️ 印刷指示</h3>
             
