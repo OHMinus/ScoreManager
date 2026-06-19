@@ -51,17 +51,18 @@
         <form id="uploadForm" method="POST" enctype="multipart/form-data">
             
             <div class="action-box">
-                <label for="files">【方法A】画像ファイルから登録:</label>
+                <label for="files">画像ファイルから登録:</label>
                 <input type="file" id="files" name="files" accept="image/*" multiple style="margin-bottom: 10px;">
                 <button type="button" id="btn-process" onclick="submitProcessForm()">ファイルを選択してプレビューへ</button>
             </div>
 
+            {% if printer %}
             <div class="action-box">
-                <label for="device_name">【方法B】スキャナーから直接登録:</label>
+                <label for="device_name">スキャナーから直接登録:</label>
                 <input type="text" id="device_name" name="device_name" placeholder="デバイス名 (空欄でシステムデフォルトを使用)" style="margin-bottom: 10px;">
                 <button type="submit" formaction="{{ url_for('scan_ui') }}" id="btn-scan" style="background: #27ae60;">スキャン作業を開始する</button>
             </div>
-
+            {% endif %}
             <div id="loading-overlay">
                 <div class="loader" style="width: 60px; height: 60px; border-width: 8px;"></div>
                 <h2 style="margin: 20px 0 10px 0; font-weight: bold; color: #2c3e50; border: none; padding: 0;">アップロード・処理中...</h2>
@@ -99,7 +100,10 @@
             }
 
             document.getElementById('btn-process').style.display = 'none';
-            document.getElementById('btn-scan').style.display = 'none';
+            const btnScan = document.getElementById('btn-scan');
+            if (btnScan) {
+                btnScan.style.style.display = 'none';
+            }
             document.getElementById('loading-overlay').style.display = 'flex';
 
             var formData = new FormData(document.getElementById('uploadForm'));
