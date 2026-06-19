@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, session
+from flask import Flask, send_from_directory, render_template, request, redirect, url_for, flash, send_file, jsonify, session
 import os
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 import glob
@@ -326,7 +326,7 @@ def preview_result(task_id,isFirst = False):
     return render_template('preview.html', previews=result["preview_filenames"], piece_guess=result["piece_guess"], inst_guess=result["inst_guess"],
                            piece_names=score_api.get_unique_piece_names(), event_names=score_api.get_unique_event_names(),
                            composers=score_api.get_unique_composers_arrangers()[0], arrangers=score_api.get_unique_composers_arrangers()[1],
-                           current_year=datetime.datetime.now().year, google_logged_in=session['google_logged_in'])
+                           current_year=datetime.datetime.now().year, drive_service=drive_service)
     
 @app.route('/scan_ui', methods=['POST'])
 def scan_ui():
@@ -381,7 +381,7 @@ def scan_to_preview():
     return render_template('preview.html', previews=scanned_files, piece_guess=piece_guess, inst_guess=inst_guess,
                            piece_names=score_api.get_unique_piece_names(), event_names=score_api.get_unique_event_names(),
                            composers=score_api.get_unique_composers_arrangers()[0], arrangers=score_api.get_unique_composers_arrangers()[1],
-                           current_year=datetime.datetime.now().year)
+                           current_year=datetime.datetime.now().year,drive_service=drive_service)
 
 @app.route('/update_order', methods=['POST'])
 def update_order():
@@ -397,13 +397,13 @@ def update_order():
         return render_template('preview.html', previews=sorted_filenames, piece_guess=piece, inst_guess=instrument,
                                piece_names=score_api.get_unique_piece_names(), event_names=score_api.get_unique_event_names(),
                                composers=score_api.get_unique_composers_arrangers()[0], arrangers=score_api.get_unique_composers_arrangers()[1],
-                               current_year=datetime.datetime.now().year)
+                               current_year=datetime.datetime.now().year,drive_service=drive_service)
     except ValueError:
         flash('順序には数値を入力してください。')
         return render_template('preview.html', previews=filenames, piece_guess=piece, inst_guess=instrument,
                                piece_names=score_api.get_unique_piece_names(), event_names=score_api.get_unique_event_names(),
                                composers=score_api.get_unique_composers_arrangers()[0], arrangers=score_api.get_unique_composers_arrangers()[1],
-                               current_year=datetime.datetime.now().year)
+                               current_year=datetime.datetime.now().year,drive_service=drive_service)
 
 @app.route('/api/get_profiles')
 def api_get_profiles():
@@ -573,6 +573,11 @@ def download_from_drive_if_missing(score_id, instrument, details):
 
     return target_dir, urls
 
+@app.route('/image/404')
+def get_image():
+    IMAGE_FOLDER = os.path.join(app.root_path, 'static')
+    return send_from_directory(IMAGE_FOLDER, '404.jpg')
+
 @app.route('/support/printer')
 def GetPrinterState():
     return score_api.get_printer_dict()
@@ -586,13 +591,14 @@ def view_score():
     details = score_api.get_piece_details(score_id)
     if not details: return redirect(url_for('score_list'))
 
-    filenames,target_dir, urls = GetImagePathes(score_id, instrument, details)
+    filenames,target_dir, urlsTmp = GetImagePathes(score_id, instrument, details)
     
     printers = GetPrinterState()
     if len(printers.keys()) == 0:
         printers = None
 
-    # urls は、テンプレートでアップロードボタンの表示制御などに使えるよう渡す
+    urls = [url if url is not None else url_for("get_image") for url in urlsTmp]
+
     return render_template('view_score.html',
                            printer=printers,
                            details=details, 

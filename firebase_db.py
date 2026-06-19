@@ -3,7 +3,7 @@ Firebase と Google Drive の連携を担当するモジュール
 score_api.py をコアロジック（ローカル処理）とデータ永続化層に分離するため、
 ここで外部サービス（Firebase/Google Drive）の処理を集約する
 """
-
+import gc
 import os
 import json
 import glob
@@ -17,7 +17,6 @@ from googleapiclient.http import MediaIoBaseUpload
 from PIL import Image
 import io
 import concurrent.futures
-
 
 # ==========================================
 # Firebase と Google Drive の初期化
@@ -293,44 +292,51 @@ def get_or_create_drive_path(drive_service, root_id, path_components):
         
     return current_parent_id
 
+
 def upload_image_to_google_drive(pil_image, filename, drive_service, folder_id):
     """
     PIL Image を Google Drive にアップロードし、アクセス可能な URL を返す
-    
-    Args:
-        pil_image: PIL Image オブジェクト
-        filename: ファイル名
-        drive_service: Google Drive service オブジェクト
-        folder_id: アップロード先フォルダID
-    
-    Returns:
-        (file_id, public_url) のタプル、失敗時は (None, None)
     """
-    if not drive_service or not folder_id:
+    if not folder_id:
         return None, None
     
+    # 最後に必ず close するため、あらかじめ None で初期化
+    img_io = None
+
     try:
         # PIL Image をバイトストリームに変換
         img_io = io.BytesIO()
+        print(f"saving {filename}")
         pil_image.save(img_io, format='PNG')
         img_io.seek(0)
         
-        # Google Drive にアップロード
+        # Google Drive にアップロード用のメタデータ
         file_metadata = {
             'name': filename,
             'parents': [folder_id],
             'mimeType': 'image/png'
         }
         
-        media = MediaIoBaseUpload(img_io, mimetype='image/png')
-        file = drive_service.files().create(
+        # 1. 5MB単位で分割アップロードを設定
+        media = MediaIoBaseUpload(img_io, mimetype='image/png', chunksize=256*1024, resumable=True)
+        
+        # ※ここではまだ .execute() は呼ばない
+        request = drive_service.files().create(
             body=file_metadata,
             media_body=media,
             fields='id',
             supportsAllDrives=True
-        ).execute()
+        )
         
-        file_id = file.get('id')
+        # 2. ループを回して実際に分割アップロードを実行する
+        response = None
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                print(f"  -> {filename} Uploading... {int(status.progress() * 100)}%")
+        
+        # アップロード完了後のファイルID取得
+        file_id = response.get('id')
         
         # ファイルを公開設定にする
         drive_service.permissions().create(
@@ -343,12 +349,22 @@ def upload_image_to_google_drive(pil_image, filename, drive_service, folder_id):
         public_url = f"https://drive.google.com/uc?id={file_id}"
         
         print(f"✓ Uploaded to Google Drive: {filename}")
+        gc.collect()
         return file_id, public_url
         
     except Exception as e:
         print(f"✗ Failed to upload to Google Drive: {e}")
         return None, None
-
+        
+    finally:
+        # 3. 正常終了・異常終了に関わらず、メモリ上のストリームを確実に解放する
+        if img_io:
+            img_io.close()
+        
+        # 呼び出し元のループ処理でメモリが逼迫するのを防ぐため、
+        # この関数内で使い終わった pil_image も明示的にクローズすることを推奨します
+        if pil_image:
+            pil_image.close()
 
 def upload_score_pages_to_google_drive(score_dir, score_id, instrument, drive_service, folder_id):
     """
@@ -368,7 +384,7 @@ def upload_score_pages_to_google_drive(score_dir, score_id, instrument, drive_se
         return []
     
     try:
-        # Get list of existing files in the folder to avoid duplicate uploads
+        # 重複アップロードを避けるため、既存のファイル一覧を取得
         query = f"'{folder_id}' in parents and trashed=false"
         results = drive_service.files().list(
             q=query, spaces='drive', fields='files(id, name)',
@@ -379,30 +395,28 @@ def upload_score_pages_to_google_drive(score_dir, score_id, instrument, drive_se
         image_files = sorted(glob.glob(os.path.join(score_dir, "*.png")))
         urls_list = [None] * len(image_files)
 
-        def process_upload(i, image_file):
+        # 🔴 ThreadPoolExecutor を廃止し、安全な通常の for ループに変更
+        for i, image_file in enumerate(image_files):
             filename = os.path.basename(image_file)
+            
             if filename in existing_files:
+                # 既にファイルが存在する場合はスキップ
                 file_id = existing_files[filename]
                 url = f"https://drive.google.com/uc?id={file_id}"
                 print(f"✓ Skipped existing file on Google Drive: {filename}")
-                return i, url
+                urls_list[i] = url
             else:
+                # 存在しない場合のみ、Pillowで開いてアップロード
                 pil_image = Image.open(image_file)
+                # 前回の修正通り、drive_service を引数として渡す
                 _, url = upload_image_to_google_drive(pil_image, filename, drive_service, folder_id)
-                return i, url
-
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [executor.submit(process_upload, i, img_file) for i, img_file in enumerate(image_files)]
-            for future in concurrent.futures.as_completed(futures):
-                idx, url = future.result()
-                urls_list[idx] = url
+                urls_list[i] = url
         
-        urls = [url for url in urls_list if url is not None]
-        return urls
+        return urls_list
+        
     except Exception as e:
         print(f"✗ Failed to upload score pages: {e}")
         return []
-
 
 # ==========================================
 # 便利関数
