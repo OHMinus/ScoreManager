@@ -6,9 +6,8 @@ import glob
 import json
 import uuid
 import subprocess
-import io
-import requests
 import base64
+import re
 
 TREBLE_CLEF_B64 = "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"
 
@@ -664,23 +663,12 @@ def search_pieces_by_keyword(keyword):
             })
     return sorted(results, key=lambda x: x['piece'])
 
-def apply_layout(directory, mode='booklet', orientation='portrait', booklet_dir='left', dpi=300, urls=None):
+def apply_layout(directory, mode='booklet', orientation='portrait', booklet_dir='left', dpi=300):
     pages = []
-    if urls:
-        for url in urls:
-            try:
-                 response = requests.get(url)
-                 response.raise_for_status()
-                 pages.append(Image.open(io.BytesIO(response.content)))
-            except Exception as e:
-                 print(f"Error downloading image from Drive: {e}")
-                 raise ValueError(f"画像のダウンロードに失敗しました: {url}")
-        if not pages: raise ValueError(f"画像がありません")
-    else:
-        if not os.path.exists(directory): raise FileNotFoundError(f"ディレクトリが見つかりません: {directory}")
-        image_files = sorted(glob.glob(os.path.join(directory, "*.png")))
-        if not image_files: raise ValueError(f"画像がありません: {directory}")
-        pages = [Image.open(f) for f in image_files]
+    if not os.path.exists(directory): raise FileNotFoundError(f"ディレクトリが見つかりません: {directory}")
+    image_files = sorted(glob.glob(os.path.join(directory, "*.png")))
+    if not image_files: raise ValueError(f"画像がありません: {directory}")
+    pages = [Image.open(f) for f in image_files]
     output_pages = []
 
     def create_a3(p1, p2):
@@ -710,8 +698,8 @@ def apply_layout(directory, mode='booklet', orientation='portrait', booklet_dir=
             output_pages.append(create_a3(pages[idx1], pages[idx2]))
     return output_pages
 
-def layout_and_print_score(directory, mode='booklet', orientation='portrait', printer_name=None, booklet_dir='left', dpi=300, urls=None):
-    output_pages = apply_layout(directory, mode, orientation, booklet_dir, dpi, urls=urls)
+def layout_and_print_score(directory, mode='booklet', orientation='portrait', printer_name=None, booklet_dir='left', dpi=300):
+    output_pages = apply_layout(directory, mode, orientation, booklet_dir, dpi)
     temp_pdf_path = "/tmp/score_print_temp.pdf"
     if output_pages:
         output_pages[0].save(temp_pdf_path, save_all=True, append_images=output_pages[1:], format='PDF', resolution=dpi)
@@ -906,6 +894,41 @@ def _cli_show_config():
     for key, value in DEFAULT_CONFIG.items():
         print(f"  {key}: {value}")
     print()
+
+def get_printer_dict():
+    """
+    システム(CUPS)に登録されているプリンター一覧を取得し、
+    UI表示名と印刷オーダー用文字列の辞書を返す。
+    
+    Returns:
+        dict: {'プリンター名 (接続先URI)': 'オーダー用文字列(キュー名)'}
+    """
+    printer_dict = {}
+    try:
+        # lpstat -v コマンドで、デバイス名とURI(接続先)のペアを取得
+        # 出力例: "device for EPSON_EP_882A: socket://192.168.1.10:9100"
+        result = subprocess.run(['lpstat', '-v'], capture_output=True, text=True, check=True)
+        
+        for line in result.stdout.splitlines():
+            match = re.match(r"device for (.+): (.+)", line)
+            if match:
+                # layout_and_print_score の printer_name 引数に渡すべき文字列
+                dest_name = match.group(1) 
+                
+                # ユーザーが判別しやすいようにURI情報を括弧書きで追加した表示名
+                uri = match.group(2)       
+                display_name = f"{dest_name} ({uri})"
+                
+                printer_dict[display_name] = dest_name
+                
+    except FileNotFoundError:
+        print("エラー: 'lpstat' コマンドが見つかりません。CUPSがインストールされていません。")
+    except subprocess.CalledProcessError as e:
+        print(f"エラー: プリンター情報の取得に失敗しました ({e})")
+    except Exception as e:
+        print(f"予期せぬエラーが発生しました: {e}")
+        
+    return printer_dict
 
 
 if __name__ == '__main__':

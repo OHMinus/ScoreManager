@@ -5,16 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ details.piece }} ({{ instrument }}) - 閲覧</title>
     <style>
+        a{ text-decoration: none;}
         body { font-family: sans-serif; background: #e9ecef; padding: 20px; color: #333; text-align: center; }
         .container { max-width: 1000px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); text-align: left; }
         h1 { color: #2c3e50; margin-bottom: 5px; text-align: center; }
-        .btn-back { display: inline-block; background: #95a5a6; color: white; padding: 10px 15px; border-radius: 4px; text-decoration: none; margin-bottom: 20px; font-weight: bold; }
+        .btn-back { display: inline-block; background: #95a5a6; color: white; padding: 10px 15px; border-radius: 4px; margin-bottom: 20px; font-weight: bold; }
         .flash-message { background: #d4edda; color: #155724; padding: 10px; border-radius: 4px; margin-bottom: 20px; text-align: center; font-weight: bold; }
         
         .print-box { background: #f0f8ff; border: 1px dashed #3498db; padding: 15px; border-radius: 8px; margin-bottom: 30px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap; justify-content: center; }
         .print-box select, .print-box input { padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; }
-        .print-box button { background: #e74c3c; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 1.1em; transition: 0.2s; }
-        .print-box button:hover { background: #c0392b; }
+        .print-box button,.edit-button { background: #e74c3c; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 1.1em; transition: 0.2s; }
+        .print-box button:hover, .edit-button:hover { background: #c0392b; }
         
         .score-grid { display: flex; flex-direction: column; gap: 30px; align-items: center; }
         .score-page { max-width: 100%; border: 1px solid #ccc; box-shadow: 0 4px 8px rgba(0,0,0,0.2); background: white; }
@@ -23,6 +24,7 @@
 <body>
     <div class="container">
         <a href="{{ url_for('piece_details', id=details.id) }}" class="btn-back">◀ 詳細画面へ戻る</a>
+        <a href="{{ url_for('piece_details', id=details.id) }}" class="edit-button">編集</a>
 
         {% with messages = get_flashed_messages() %}
           {% if messages %}
@@ -38,6 +40,18 @@
         <h2 style="text-align: center; color: #34495e; margin-top: 0;">🎼 {{ instrument }}</h2>
         <p style="text-align: center; color: #666;">全 {{ filenames|length }} ページ</p>
 
+        {% if not has_urls %}
+        <form action="{{ url_for('upload_to_drive') }}" method="POST" class="print-box" style="background: #fff3cd; border-color: #ffeeba;">
+            <h3 style="margin: 0; color: #856404; display: flex; align-items: center;">☁️ Google Driveへアップロード</h3>
+            <input type="hidden" name="score_id" value="{{ details.id }}">
+            <input type="hidden" name="instrument" value="{{ instrument }}">
+            <p style="margin: 0; color: #666; font-size: 0.9em;">この楽譜はローカルにのみ存在します。</p>
+            <button type="submit" style="background: #28a745;">Google Drive にアップロード</button>
+        </form>
+        {% endif %}
+
+        
+        {% if printer %}
         <form action="{{ url_for('output_action') }}" method="POST" class="print-box">
             <h3 style="margin: 0; color: #2980b9; display: flex; align-items: center;">🖨️ 印刷指示</h3>
             
@@ -55,11 +69,17 @@
             </label>
             
             <label style="font-weight: bold;">プリンタ名: 
-                <input type="text" name="printer" placeholder="指定なし" style="width: 120px;">
+                <select name="printer" style="width: 250px;">
+                    <option value="">指定なし</option>
+                    {% for display_name, dest_name in printer.items() %}
+                        <option value="{{ dest_name }}">{{ display_name }}</option>
+                    {% endfor %}
+                </select>
             </label>
             
             <button type="submit" onclick="this.innerHTML='送信中...'; this.style.opacity='0.7';">サーバーから印刷を実行</button>
         </form>
+        {% endif %}
 
         <hr style="margin-bottom: 30px;">
 

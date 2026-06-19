@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    <div id="table-container"></div>
+
+<script>
+    fetch('{{url_for("GetSession")}}')
+        .then(response => response.json())
+        .then(data => createTable(data))
+        .catch(error => console.error('Error:', error));
+
+        function createTable(data) {
+        const table = document.createElement('table');
+        const thead = table.createTHead();
+        const tbody = table.createTBody();
+
+        // Create header row
+        let headerRow = thead.insertRow();
+            Object.keys(data[0]).forEach(key => {
+            let th = document.createElement('th');
+            th.textContent = key.toUpperCase();
+            headerRow.appendChild(th);
+        });
+
+        // Create data rows
+        data.forEach(item => {
+        let row = tbody.insertRow();
+        Object.values(item).forEach(value => {
+        let cell = row.insertCell();
+        cell.textContent = value;
+        });
+        });
+
+    document.getElementById('table-container').appendChild(table);
+    }
+</script>
+</body>
+</html>

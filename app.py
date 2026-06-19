@@ -17,6 +17,7 @@ import urllib.parse
 from googleapiclient.http import MediaIoBaseDownload
 from dotenv import load_dotenv
 from werkzeug.middleware.proxy_fix import ProxyFix
+import json
 from werkzeug.utils import secure_filename
 
 # dotenv はモジュールの読み込み前に実行する
@@ -40,8 +41,13 @@ app.secret_key = 'score_processor_secret_key'
 
 # Firebase と Google Drive の初期化
 firebase_db.initialize_firebase()
+# global default drive service (fallback to service account or local token.json)
 drive_service = firebase_db.initialize_google_drive()
 GOOGLE_DRIVE_FOLDER_ID = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
+
+def get_drive_service(token):
+    """Helper to get drive service utilizing session token if available."""
+    return firebase_db.initialize_google_drive(token) if token else drive_service
 
 # データベースアダプターを初期化
 db_adapter = firebase_db.get_db_adapter(use_firebase=firebase_db.is_firebase_available())
@@ -136,19 +142,35 @@ def oauth2callback():
         flow.fetch_token(authorization_response=authorization_response)
         credentials = flow.credentials
 
-        with open('token.json', 'w') as token_file:
-            token_file.write(credentials.to_json())
+        session['google_token'] = credentials.to_json()
 
         # グローバルの drive_service を再初期化
         global drive_service
-        drive_service = firebase_db.initialize_google_drive()
+        drive_service = firebase_db.initialize_google_drive(session['google_token'])
 
         session['google_logged_in'] = True
         flash('Google Drive 認証が完了しました！')
     except Exception as e:
         flash(f'Google Drive 認証に失敗しました: {e}')
-
+    print(f"session data of google_logged_in : {session["google_logged_in"]}")
     return redirect(url_for('index'))
+
+
+@app.route('/session/view')
+def SessionView():
+    return render_template("session_view.html")
+
+@app.route('/session/get')
+def GetSession():
+    if os.environ.get('isDebug'):
+        jsonStr = json.dumps(
+            dict(session),
+            ensure_ascii=False,  # Keep non-ASCII characters as-is
+            indent=4             # Pretty-print with indentation
+        )
+        return jsonStr
+    else:
+        return None
 
 
 @app.route('/')
@@ -157,8 +179,25 @@ def index():
     clear_temp_dir(TEMP_PREVIEW_DIR)
     clear_temp_dir(TEMP_DEBUG_DIR)
     clear_temp_dir(TEMP_UNCROPPED_DIR)
-    google_logged_in = session.get('google_logged_in', False)
-    return render_template('index.html', google_logged_in=google_logged_in)
+
+    # ログイン状態の確認
+    token = session.get('google_token')
+    google_logged_in = False
+    if token:
+        ds = firebase_db.initialize_google_drive(token)
+        if ds:
+            google_logged_in = True
+        else:
+            session.pop('google_token', None)
+            session.pop('google_logged_in', None)
+
+    session['google_logged_in'] = google_logged_in
+
+    printers = GetPrinterState()
+    if len(printers.keys()) == 0:
+        printers = None
+
+    return render_template('index.html',printer=printers, google_logged_in=google_logged_in)
 
 def process_images_in_background(task_id, file_paths):
     first_file_path = file_paths[0] if file_paths else None
@@ -287,7 +326,7 @@ def preview_result(task_id,isFirst = False):
     return render_template('preview.html', previews=result["preview_filenames"], piece_guess=result["piece_guess"], inst_guess=result["inst_guess"],
                            piece_names=score_api.get_unique_piece_names(), event_names=score_api.get_unique_event_names(),
                            composers=score_api.get_unique_composers_arrangers()[0], arrangers=score_api.get_unique_composers_arrangers()[1],
-                           current_year=datetime.datetime.now().year)
+                           current_year=datetime.datetime.now().year, google_logged_in=session['google_logged_in'])
     
 @app.route('/scan_ui', methods=['POST'])
 def scan_ui():
@@ -439,10 +478,9 @@ def save_score():
             if urls:
                 db = score_api.load_db()
                 if saved_score_id in db:
-                    if 'instruments' in db[saved_score_id] and instrument in db[saved_score_id]['instruments']:
-                        # dirに加えて、urls リストも保存する
-                        db[saved_score_id]['instruments'][instrument] = urls
-                        score_api.save_db(db)
+                    if 'instruments' in db[saved_score_id]:
+                         db[saved_score_id]['instruments'][instrument] = urls
+                         score_api.save_db(db)
         
         flash(f'「{piece}」({instrument}) の登録・追加が完了しました！')
         return redirect(url_for('index'))
@@ -479,15 +517,9 @@ def piece_details():
     
     return render_template('piece.html', details=details, event_names=score_api.get_unique_event_names(), current_year=datetime.datetime.now().year)
 
-@app.route('/view_score')
-def view_score():
-    score_id = request.args.get('id', '').strip()
-    instrument = request.args.get('instrument', '').strip()
-    if not score_id or not instrument: return redirect(url_for('score_list'))
-    
-    details = score_api.get_piece_details(score_id)
-    if not details: return redirect(url_for('score_list'))
-    
+
+def download_from_drive_if_missing(score_id, instrument, details):
+    """Downloads missing files for a given score/instrument from Google Drive."""
     target_dir = None
     urls = None
     for inst in details['instruments']:
@@ -495,27 +527,25 @@ def view_score():
             if 'urls' in inst:
                 urls = inst['urls']
             else:
-                target_dir = inst['dir']
+                target_dir = inst.get('dir')
             break
-            
-    # URLs だけが DB に保存されている場合、ローカルにダウンロードする
+
     if urls is not None:
         target_dir = os.path.join("score_data", score_id, instrument)
         os.makedirs(target_dir, exist_ok=True)
-
         image_files = sorted(glob.glob(os.path.join(target_dir, "*.png")))
 
-        # ローカルの画像数が URL の数と一致しない場合は再ダウンロード
         if len(image_files) != len(urls):
-            def download_single_file(i, url):
+            def download_single_file(i, url, token):
+                ds = get_drive_service(token)
                 filename = f"{score_id}_{instrument}_page_{i + 1:03d}.png"
                 filepath = os.path.join(target_dir, filename)
                 if not os.path.exists(filepath):
                     try:
                         parsed = urllib.parse.urlparse(url)
                         file_id = urllib.parse.parse_qs(parsed.query).get('id', [None])[0]
-                        if file_id and drive_service:
-                            request_obj = drive_service.files().get_media(fileId=file_id, supportsAllDrives=True)
+                        if file_id and ds:
+                            request_obj = ds.files().get_media(fileId=file_id, supportsAllDrives=True)
                             fh = io.BytesIO()
                             downloader = MediaIoBaseDownload(fh, request_obj)
                             done = False
@@ -523,21 +553,68 @@ def view_score():
                                 status, done = downloader.next_chunk()
                             with open(filepath, 'wb') as f:
                                 f.write(fh.getvalue())
+                            print(f"Download completed {url}")
                         else:
                             print(f"Could not extract file ID from URL or drive_service not available: {url}")
                     except Exception as e:
                         print(f"Error downloading image from Drive API: {e}")
 
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = [executor.submit(download_single_file, i, url) for i, url in enumerate(urls)]
-                concurrent.futures.wait(futures)
+                token = session.get('google_token')
+                futures = [executor.submit(download_single_file, i, url, token) for i, url in enumerate(urls)]
+                print(f"downloading {len(futures)}")
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        future.result() 
+                    except Exception as e:
+                        flash(f"Thread execution error: {e}")
+    elif not target_dir:
+         target_dir = os.path.join("score_data", score_id, instrument)
+
+    return target_dir, urls
+
+@app.route('/support/printer')
+def GetPrinterState():
+    return score_api.get_printer_dict()
+
+@app.route('/view_score')
+def view_score():
+    score_id = request.args.get('id', '').strip()
+    instrument = request.args.get('instrument', '').strip()
+    if not score_id or not instrument: return redirect(url_for('score_list'))
+
+    details = score_api.get_piece_details(score_id)
+    if not details: return redirect(url_for('score_list'))
+
+    filenames,target_dir, urls = GetImagePathes(score_id, instrument, details)
+    
+    printers = GetPrinterState()
+    if len(printers.keys()) == 0:
+        printers = None
+
+    # urls は、テンプレートでアップロードボタンの表示制御などに使えるよう渡す
+    return render_template('view_score.html',
+                           printer=printers,
+                           details=details, 
+                           instrument=instrument, 
+                           filenames=filenames, 
+                           target_dir=target_dir, 
+                           has_urls=urls is not None)
+
+
+def GetImagePathes(score_id, instrument, details, scoreOrder = None):
+    target_dir, urls = download_from_drive_if_missing(score_id, instrument, details)
 
     if not target_dir: return redirect(url_for('piece_details', id=score_id))
     
     image_files = sorted(glob.glob(os.path.join(target_dir, "*.png")))
     filenames = [os.path.basename(f) for f in image_files]
     
-    return render_template('view_score.html', details=details, instrument=instrument, filenames=filenames, target_dir=target_dir)
+    if scoreOrder:
+        filenamesTmp = filenames.copy()
+        filenames = [filenamesTmp[i] for i in scoreOrder]
+
+    return filenames,target_dir, urls
 
 @app.route('/score_image/<score_id>/<instrument>/<filename>')
 def score_image(score_id, instrument, filename):
@@ -557,6 +634,64 @@ def score_image(score_id, instrument, filename):
         return "Not found", 404
         
     return send_file(os.path.join(target_dir, filename))
+
+
+@app.route('/upload_to_drive', methods=['POST'])
+def upload_to_drive():
+    score_id = request.form.get('score_id')
+    instrument = request.form.get('instrument')
+
+    if not score_id or not instrument:
+        flash('必要なパラメータがありません。')
+        return redirect(url_for('score_list'))
+
+    token = session.get('google_token')
+    ds = get_drive_service(token)
+    if not ds or not GOOGLE_DRIVE_FOLDER_ID:
+        flash('Google Drive にログインしていません。')
+        return redirect(url_for('view_score', id=score_id, instrument=instrument))
+
+    details = score_api.get_piece_details(score_id)
+    if not details:
+        flash('楽譜が見つかりません。')
+        return redirect(url_for('score_list'))
+
+    target_dir = None
+    for inst in details['instruments']:
+        if inst['name'] == instrument:
+            target_dir = inst.get('dir')
+            if 'urls' in inst:
+                flash('すでにGoogle Driveにアップロードされています。')
+                return redirect(url_for('view_score', id=score_id, instrument=instrument))
+            break
+
+    if not target_dir or not os.path.exists(target_dir):
+        flash('ローカルの楽譜ファイルが見つかりません。')
+        return redirect(url_for('view_score', id=score_id, instrument=instrument))
+
+    actual_year = details['events'][0]['year'] if details.get('events') else str(datetime.datetime.now().year)
+    actual_event_name = details['events'][0]['event_name'] if details.get('events') else '未設定行事'
+    piece_name = details.get('piece', 'UnknownPiece')
+
+    event_dir_name = f"{actual_year}{actual_event_name}"
+    path_components = [event_dir_name, piece_name, instrument]
+
+    target_folder_id = firebase_db.get_or_create_drive_path(ds, GOOGLE_DRIVE_FOLDER_ID, path_components)
+
+    urls = []
+    if target_folder_id:
+        urls = firebase_db.upload_score_pages_to_google_drive(target_dir, score_id, instrument, ds, target_folder_id)
+
+    if urls:
+        db = score_api.load_db()
+        if score_id in db and 'instruments' in db[score_id] and instrument in db[score_id]['instruments']:
+            db[score_id]['instruments'][instrument] = urls
+            score_api.save_db(db)
+            flash(f'「{piece_name}」({instrument}) をGoogle Driveへアップロードしました。')
+    else:
+        flash('アップロードに失敗しました。')
+
+    return redirect(url_for('view_score', id=score_id, instrument=instrument))
 
 @app.route('/update_db_order', methods=['POST'])
 def update_db_order():
@@ -729,26 +864,24 @@ def output_action():
     piece = request.form.get('piece', 'score')
     inst = request.form.get('instrument', 'inst')
 
-    urls = None
     details = score_api.get_piece_details(score_id)
     if details:
-         for instrument_dict in details['instruments']:
-              if instrument_dict['name'] == inst and 'urls' in instrument_dict:
-                   urls = instrument_dict['urls']
-                   break
+        target_dir, urls = download_from_drive_if_missing(score_id, inst, details)
+        if target_dir:
+            directory = target_dir
 
-    if not urls and (not directory or not os.path.exists(directory)):
+    if not directory or not os.path.exists(directory):
         flash('エラー: 指定されたデータが見つかりません。')
         return redirect(url_for('piece_details', id=score_id))
     try:
         if action_type == 'print':
-            score_api.layout_and_print_score(directory=directory, mode=mode, orientation=score_api.DEFAULT_CONFIG['page_orientation'], printer_name=printer if printer else None, dpi=score_api.DEFAULT_CONFIG['dpi'], urls=urls)
+            score_api.layout_and_print_score(directory=directory, mode=mode, orientation=score_api.DEFAULT_CONFIG['page_orientation'], printer_name=printer if printer else None, dpi=score_api.DEFAULT_CONFIG['dpi'])
             flash(f'[{piece} - {inst}] の印刷ジョブを送信しました！')
             if request.form.get('from_view'):
                 return redirect(url_for('view_score', id=score_id, instrument=inst))
             return redirect(url_for('piece_details', id=score_id))
             
-        output_pages = score_api.apply_layout(directory=directory, mode=mode, orientation=score_api.DEFAULT_CONFIG['page_orientation'], booklet_dir=score_api.DEFAULT_CONFIG['booklet_direction'], dpi=score_api.DEFAULT_CONFIG['dpi'], urls=urls)
+        output_pages = score_api.apply_layout(directory=directory, mode=mode, orientation=score_api.DEFAULT_CONFIG['page_orientation'], booklet_dir=score_api.DEFAULT_CONFIG['booklet_direction'], dpi=score_api.DEFAULT_CONFIG['dpi'])
         safe_filename = f"{piece}_{inst}_{mode}".replace(' ', '_')
         
         if action_type == 'pdf':

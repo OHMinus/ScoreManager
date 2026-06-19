@@ -49,12 +49,20 @@ def initialize_firebase():
         return False
 
 
-def initialize_google_drive():
-    """OAuth 2.0 を使用して Google Drive API を初期化する。token.json がない場合はサービスアカウントでフォールバックする。"""
+def initialize_google_drive(token_json_str=None):
+    """OAuth 2.0 を使用して Google Drive API を初期化する。token_json_str がない場合はサービスアカウントでフォールバックする。"""
     SCOPES = ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/drive.readonly']
     creds = None
     
-    if os.path.exists('token.json'):
+    if token_json_str:
+        try:
+            creds = Credentials.from_authorized_user_info(json.loads(token_json_str), SCOPES)
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+        except Exception as e:
+            print(f"✗ Failed to load/refresh token from session string: {e}")
+            creds = None
+    elif os.path.exists('token.json'):
         try:
             creds = Credentials.from_authorized_user_file('token.json', SCOPES)
             if creds and creds.expired and creds.refresh_token:
@@ -174,18 +182,42 @@ class DatabaseAdapter:
     
     def load(self):
         """データを読み込む"""
+        local_data = load_db_from_json(self.json_path)
         if self.use_firebase:
-            data = load_db_from_firebase()
-            if data is not None:
-                return data
-        return load_db_from_json(self.json_path)
+            firebase_data = load_db_from_firebase()
+            if firebase_data is not None:
+                # Merge logic: priorites Firebase instruments with urls
+                # Update local data with Firebase data, keeping local-only files
+                merged_data = local_data.copy()
+                for score_id, fb_score in firebase_data.items():
+                    if score_id not in merged_data:
+                        merged_data[score_id] = fb_score
+                    else:
+                        for fb_inst_name, fb_inst_data in fb_score.get('instruments', {}).items():
+                            # If firebase has urls, update local
+                            if isinstance(fb_inst_data, list):
+                                merged_data[score_id].setdefault('instruments', {})[fb_inst_name] = fb_inst_data
+                return merged_data
+        return local_data
     
     def save(self, data):
         """データを保存する"""
         success_json = save_db_to_json(data, self.json_path)
         
         if self.use_firebase:
-            success_firebase = save_db_to_firebase(data)
+            # Only save items with URLs to firebase
+            firebase_data = {}
+            for score_id, score in data.items():
+                filtered_instruments = {}
+                for inst_name, inst_data in score.get('instruments', {}).items():
+                    if isinstance(inst_data, list):
+                        filtered_instruments[inst_name] = inst_data
+                if filtered_instruments:
+                    fb_score = score.copy()
+                    fb_score['instruments'] = filtered_instruments
+                    firebase_data[score_id] = fb_score
+
+            success_firebase = save_db_to_firebase(firebase_data)
             return success_firebase and success_json
         
         return success_json

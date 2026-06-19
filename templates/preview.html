@@ -377,8 +377,12 @@
                     <input type="hidden" name="previews" value="{{ fname }}">
                 {% endfor %}
             </div>
-
-            <button type="submit" class="btn-submit" id="btn-save">データベースに保存</button>
+            
+            {% if google_logged_in %}
+                <button type="submit" class="btn-submit" id="btn-save">データベースに保存 (ネットワーク)</button>
+            {% else %}
+                <button type="submit" class="btn-submit" id="btn-save">データベースに保存 (ローカル)</button>
+            {% endif %}
         </form>
     </div>
 
