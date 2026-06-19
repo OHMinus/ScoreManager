@@ -406,25 +406,29 @@ def process_file_to_1in1(file_path, config=DEFAULT_CONFIG, debug_out_dir=None, p
     update_progress(55)
     
     for idx, sub_img in enumerate(split_images):
-        add_debug(f"5_Split_Candidate_{idx+1}", sub_img)
-        
-        # ★ ステップ2: Splitされた「1ページ」に対して、上下の向きを判定・補正する
-        if debug_out_dir:
-            sub_img, debug_upright = ensure_upright(sub_img, return_debug=True)
-            add_debug(f"6_Ensure_Upright_{idx+1}", debug_upright)
-        else:
-            sub_img = ensure_upright(sub_img)
-
-        # Progress calculation based on loop iterations
-        progress_val = 55 + int((idx + 0.5) / len(split_images) * 40)
-        update_progress(progress_val)
+        try:
+            add_debug(f"5_Split_Candidate_{idx+1}", sub_img)
             
-        cropped = crop_margins_and_fit(sub_img, config)
-        add_debug(f"7_Cropped_Final_Page_{idx+1}", cropped)
-        processed_pages.append((cropped, sub_img))
-        
-        progress_val = 55 + int((idx + 1) / len(split_images) * 40)
-        update_progress(progress_val)
+            # ★ ステップ2: Splitされた「1ページ」に対して、上下の向きを判定・補正する
+            if debug_out_dir:
+                sub_img, debug_upright = ensure_upright(sub_img, return_debug=True)
+                add_debug(f"6_Ensure_Upright_{idx+1}", debug_upright)
+            else:
+                sub_img = ensure_upright(sub_img)
+
+            # Progress calculation based on loop iterations
+            progress_val = 55 + int((idx + 0.5) / len(split_images) * 40)
+            update_progress(progress_val)
+                
+            cropped = crop_margins_and_fit(sub_img, config)
+            add_debug(f"7_Cropped_Final_Page_{idx+1}", cropped)
+            processed_pages.append((cropped, sub_img))
+            
+            progress_val = 55 + int((idx + 1) / len(split_images) * 40)
+            update_progress(progress_val)
+        except Exception as e:
+            print(f"Error : {e}")
+            continue
 
     if debug_out_dir:
         os.makedirs(debug_out_dir, exist_ok=True)
