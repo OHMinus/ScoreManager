@@ -470,9 +470,10 @@ def save_score():
 
             urls = []
             if target_folder_id:
+                token = session.get('google_token')
                 urls = firebase_db.upload_score_pages_to_google_drive(
                     saved_dir, saved_score_id, instrument,
-                    drive_service, target_folder_id
+                    token, target_folder_id
                 )
             # Firebase にも URL を記録
             if urls:
@@ -519,7 +520,7 @@ def piece_details():
 
 
 def download_from_drive_if_missing(score_id, instrument, details):
-    """Downloads missing files for a given score/instrument from Google Drive."""
+    """【セキュリティ＆安定性両立版】Driveから必要な分だけ安全に直列ダウンロードする"""
     target_dir = None
     urls = None
     for inst in details['instruments']:
@@ -533,41 +534,51 @@ def download_from_drive_if_missing(score_id, instrument, details):
     if urls is not None:
         target_dir = os.path.join("score_data", score_id, instrument)
         os.makedirs(target_dir, exist_ok=True)
+        
+        # すでにローカル（サーバー内）に保存されているファイル数をカウント
         image_files = sorted(glob.glob(os.path.join(target_dir, "*.png")))
 
+        # 枚数が一致しない場合（未ダウンロード、または不足がある場合）のみDriveから取得
         if len(image_files) != len(urls):
-            def download_single_file(i, url, token):
-                ds = get_drive_service(token)
+            token = session.get('google_token')
+            
+            # グローバル共有を避け、このユーザー要求のためだけの ds を毎回生成（SAトークンの衝突防止）
+            ds = firebase_db.initialize_google_drive(token)
+
+            print(f"🔒 サーバー内に安全にダウンロード中... (全 {len(urls)} ページ)")
+            
+            # 並列ではなく、1枚ずつ直列で確実にダウンロード
+            for i, url in enumerate(urls):
                 filename = f"{score_id}_{instrument}_page_{i + 1:03d}.png"
                 filepath = os.path.join(target_dir, filename)
+                
+                # すでにディスクにあるページはスキップし、足りないページだけを狙い撃ち
                 if not os.path.exists(filepath):
                     try:
                         parsed = urllib.parse.urlparse(url)
                         file_id = urllib.parse.parse_qs(parsed.query).get('id', [None])[0]
+                        
                         if file_id and ds:
                             request_obj = ds.files().get_media(fileId=file_id, supportsAllDrives=True)
-                            fh = io.BytesIO()
-                            downloader = MediaIoBaseDownload(fh, request_obj)
-                            done = False
-                            while done is False:
-                                status, done = downloader.next_chunk()
-                            with open(filepath, 'wb') as f:
-                                f.write(fh.getvalue())
-                            print(f"Download completed {url}")
-                        else:
-                            print(f"Could not extract file ID from URL or drive_service not available: {url}")
+                            
+                            # with 構文で1枚ごとにバイナリメモリを強制解放
+                            with io.BytesIO() as fh:
+                                downloader = MediaIoBaseDownload(fh, request_obj)
+                                done = False
+                                while done is False:
+                                    status, done = downloader.next_chunk()
+                                
+                                with open(filepath, 'wb') as f:
+                                    f.write(fh.getvalue())
+                                    
+                            print(f"  -> Cache completed: {filename}")
                     except Exception as e:
-                        print(f"Error downloading image from Drive API: {e}")
+                        print(f"  -> Error caching page {i+1}: {e}")
+            
+            # メモリを徹底的に掃除
+            import gc
+            gc.collect()
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                token = session.get('google_token')
-                futures = [executor.submit(download_single_file, i, url, token) for i, url in enumerate(urls)]
-                print(f"downloading {len(futures)}")
-                for future in concurrent.futures.as_completed(futures):
-                    try:
-                        future.result() 
-                    except Exception as e:
-                        flash(f"Thread execution error: {e}")
     elif not target_dir:
          target_dir = os.path.join("score_data", score_id, instrument)
 
@@ -686,7 +697,11 @@ def upload_to_drive():
 
     urls = []
     if target_folder_id:
-        urls = firebase_db.upload_score_pages_to_google_drive(target_dir, score_id, instrument, ds, target_folder_id)
+        token = session.get('google_token')
+        urls = firebase_db.upload_score_pages_to_google_drive(
+            target_dir, score_id, instrument,
+            token, target_folder_id
+        )
 
     if urls:
         db = score_api.load_db()
