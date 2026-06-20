@@ -384,7 +384,7 @@ def upload_score_pages_to_google_drive(score_dir, score_id, instrument, token, f
         URL のリスト、または空リスト（エラー時）
     """
     # 1. 最初にスレッド外で1回だけ、既存ファイル確認用にサービスを作る
-    base_ds = firebase_db.initialize_google_drive(token)
+    base_ds = initialize_google_drive(token)
     if not base_ds or not folder_id:
         return []
     

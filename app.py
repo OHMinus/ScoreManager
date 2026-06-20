@@ -552,7 +552,6 @@ def download_from_drive_if_missing(score_id, instrument, details):
                 filename = f"{score_id}_{instrument}_page_{i + 1:03d}.png"
                 filepath = os.path.join(target_dir, filename)
                 
-                # すでにディスクにあるページはスキップし、足りないページだけを狙い撃ち
                 if not os.path.exists(filepath):
                     try:
                         parsed = urllib.parse.urlparse(url)
