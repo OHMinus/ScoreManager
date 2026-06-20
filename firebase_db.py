@@ -3,7 +3,7 @@ Firebase と Google Drive の連携を担当するモジュール
 score_api.py をコアロジック（ローカル処理）とデータ永続化層に分離するため、
 ここで外部サービス（Firebase/Google Drive）の処理を集約する
 """
-
+import gc
 import os
 import json
 import glob
@@ -17,7 +17,6 @@ from googleapiclient.http import MediaIoBaseUpload
 from PIL import Image
 import io
 import concurrent.futures
-
 
 # ==========================================
 # Firebase と Google Drive の初期化
@@ -53,7 +52,7 @@ def initialize_google_drive(token_json_str=None):
     """OAuth 2.0 を使用して Google Drive API を初期化する。token_json_str がない場合はサービスアカウントでフォールバックする。"""
     SCOPES = ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/drive.readonly']
     creds = None
-    
+    mode = "user"
     if token_json_str:
         try:
             creds = Credentials.from_authorized_user_info(json.loads(token_json_str), SCOPES)
@@ -73,34 +72,37 @@ def initialize_google_drive(token_json_str=None):
             creds = None
 
     if not creds or not creds.valid:
-        service_account_path = os.environ.get('GOOGLE_DRIVE_SERVICE_ACCOUNT_PATH', 'service_account.json')
-        client_secret_path = os.environ.get('GOOGLE_DRIVE_CRED_PATH', 'client_secret.json')
+        print(f"Try to use SA")
+        mode = "Service Account"
+        service_account_path = os.environ.get('FIREBASE_CRED_PATH', 'service_account.json')
+        service_account_json_str = os.environ.get('FIREBASE_CRED', None)
 
         # Check explicit service account path first, then fallback to checking client secret path as SA
         if os.path.exists(service_account_path):
             try:
                 creds = service_account.Credentials.from_service_account_file(
                     service_account_path, scopes=SCOPES)
-                print("✓ Google Drive API initialized with Service Account.")
             except Exception as e:
                 print(f"✗ Failed to load Service Account: {e}")
-        elif os.path.exists(client_secret_path):
-             # Some users might configure GOOGLE_DRIVE_CRED_PATH with a service account JSON by mistake or design
-             try:
-                 creds = service_account.Credentials.from_service_account_file(
-                     client_secret_path, scopes=SCOPES)
-                 print("✓ Google Drive API initialized with Service Account from client_secret path.")
-             except Exception:
-                 pass # It's probably an OAuth client secret file, so we ignore the error
+        elif service_account_json_str:
+            try:
+                # 文字列を JSON (辞書型) にパース
+                sa_info = json.loads(service_account_json_str)
+                # from_service_account_info を使って直接認証情報を生成
+                creds = service_account.Credentials.from_service_account_info(
+                    sa_info, scopes=SCOPES)
+            except Exception as e:
+                print(f"✗ Failed to load Service Account from String: {e}")
 
-    if creds and creds.valid:
+    if creds:
         try:
             drive_service = build('drive', 'v3', credentials=creds)
-            print("✓ Google Drive API initialized successfully.")
+            print(f"✓ Google Drive API initialized successfully in {mode} mode.")
             return drive_service
         except Exception as e:
             print(f"✗ Failed to initialize Google Drive: {e}")
-
+    else:
+        print(f"?  Google Drive API initialized successfully but None is there \ncred:{creds}\nis valid:{creds.valid}")
     return None
 
 
@@ -293,44 +295,51 @@ def get_or_create_drive_path(drive_service, root_id, path_components):
         
     return current_parent_id
 
+
 def upload_image_to_google_drive(pil_image, filename, drive_service, folder_id):
     """
     PIL Image を Google Drive にアップロードし、アクセス可能な URL を返す
-    
-    Args:
-        pil_image: PIL Image オブジェクト
-        filename: ファイル名
-        drive_service: Google Drive service オブジェクト
-        folder_id: アップロード先フォルダID
-    
-    Returns:
-        (file_id, public_url) のタプル、失敗時は (None, None)
     """
-    if not drive_service or not folder_id:
+    if not folder_id:
         return None, None
     
+    # 最後に必ず close するため、あらかじめ None で初期化
+    img_io = None
+
     try:
         # PIL Image をバイトストリームに変換
         img_io = io.BytesIO()
+        print(f"saving {filename}")
         pil_image.save(img_io, format='PNG')
         img_io.seek(0)
         
-        # Google Drive にアップロード
+        # Google Drive にアップロード用のメタデータ
         file_metadata = {
             'name': filename,
             'parents': [folder_id],
             'mimeType': 'image/png'
         }
         
-        media = MediaIoBaseUpload(img_io, mimetype='image/png')
-        file = drive_service.files().create(
+        # 1. 5MB単位で分割アップロードを設定
+        media = MediaIoBaseUpload(img_io, mimetype='image/png', chunksize=256*1024, resumable=True)
+        
+        # ※ここではまだ .execute() は呼ばない
+        request = drive_service.files().create(
             body=file_metadata,
             media_body=media,
             fields='id',
             supportsAllDrives=True
-        ).execute()
+        )
         
-        file_id = file.get('id')
+        # 2. ループを回して実際に分割アップロードを実行する
+        response = None
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                print(f"  -> {filename} Uploading... {int(status.progress() * 100)}%")
+        
+        # アップロード完了後のファイルID取得
+        file_id = response.get('id')
         
         # ファイルを公開設定にする
         drive_service.permissions().create(
@@ -343,14 +352,24 @@ def upload_image_to_google_drive(pil_image, filename, drive_service, folder_id):
         public_url = f"https://drive.google.com/uc?id={file_id}"
         
         print(f"✓ Uploaded to Google Drive: {filename}")
+        gc.collect()
         return file_id, public_url
         
     except Exception as e:
         print(f"✗ Failed to upload to Google Drive: {e}")
         return None, None
+        
+    finally:
+        # 3. 正常終了・異常終了に関わらず、メモリ上のストリームを確実に解放する
+        if img_io:
+            img_io.close()
+        
+        # 呼び出し元のループ処理でメモリが逼迫するのを防ぐため、
+        # この関数内で使い終わった pil_image も明示的にクローズすることを推奨します
+        if pil_image:
+            pil_image.close()
 
-
-def upload_score_pages_to_google_drive(score_dir, score_id, instrument, drive_service, folder_id):
+def upload_score_pages_to_google_drive(score_dir, score_id, instrument, token, folder_id):
     """
     ローカルに保存されたスコアページを Google Drive にアップロードし、URL リストを返す
     
@@ -364,45 +383,46 @@ def upload_score_pages_to_google_drive(score_dir, score_id, instrument, drive_se
     Returns:
         URL のリスト、または空リスト（エラー時）
     """
-    if not drive_service or not folder_id:
+    # 1. 最初にスレッド外で1回だけ、既存ファイル確認用にサービスを作る
+    base_ds = firebase_db.initialize_google_drive(token)
+    if not base_ds or not folder_id:
         return []
     
     try:
-        # Get list of existing files in the folder to avoid duplicate uploads
         query = f"'{folder_id}' in parents and trashed=false"
-        results = drive_service.files().list(
-            q=query, spaces='drive', fields='files(id, name)',
-            supportsAllDrives=True, includeItemsFromAllDrives=True
-        ).execute()
+        results = base_ds.files().list(q=query, spaces='drive', fields='files(id, name)', supportsAllDrives=True).execute()
         existing_files = {item['name']: item['id'] for item in results.get('files', [])}
 
         image_files = sorted(glob.glob(os.path.join(score_dir, "*.png")))
         urls_list = [None] * len(image_files)
 
+        # 各スレッドで実行される内部関数
         def process_upload(i, image_file):
             filename = os.path.basename(image_file)
             if filename in existing_files:
                 file_id = existing_files[filename]
-                url = f"https://drive.google.com/uc?id={file_id}"
-                print(f"✓ Skipped existing file on Google Drive: {filename}")
-                return i, url
+                return i, f"https://drive.google.com/uc?id={file_id}"
             else:
+                # 🔴 【超重要】各スレッドの内部で、自分専用の drive_service を生成する
+                # これにより、別スレッドの通信とメモリ領域が100%隔離されます
+                thread_ds = firebase_db.initialize_google_drive(token)
+                
                 pil_image = Image.open(image_file)
-                _, url = upload_image_to_google_drive(pil_image, filename, drive_service, folder_id)
+                # 専用の thread_ds を渡してアップロード
+                _, url = upload_image_to_google_drive(pil_image, filename, thread_ds, folder_id)
                 return i, url
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+        # 🚀 安全にマルチスレッド並列処理を実行！
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             futures = [executor.submit(process_upload, i, img_file) for i, img_file in enumerate(image_files)]
             for future in concurrent.futures.as_completed(futures):
                 idx, url = future.result()
                 urls_list[idx] = url
         
-        urls = [url for url in urls_list if url is not None]
-        return urls
+        return urls_list
     except Exception as e:
         print(f"✗ Failed to upload score pages: {e}")
         return []
-
 
 # ==========================================
 # 便利関数

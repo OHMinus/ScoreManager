@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, session
+from flask import Flask, send_from_directory, render_template, request, redirect, url_for, flash, send_file, jsonify, session
 import os
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 import glob
@@ -326,7 +326,7 @@ def preview_result(task_id,isFirst = False):
     return render_template('preview.html', previews=result["preview_filenames"], piece_guess=result["piece_guess"], inst_guess=result["inst_guess"],
                            piece_names=score_api.get_unique_piece_names(), event_names=score_api.get_unique_event_names(),
                            composers=score_api.get_unique_composers_arrangers()[0], arrangers=score_api.get_unique_composers_arrangers()[1],
-                           current_year=datetime.datetime.now().year, google_logged_in=session['google_logged_in'])
+                           current_year=datetime.datetime.now().year, drive_service=drive_service)
     
 @app.route('/scan_ui', methods=['POST'])
 def scan_ui():
@@ -381,7 +381,7 @@ def scan_to_preview():
     return render_template('preview.html', previews=scanned_files, piece_guess=piece_guess, inst_guess=inst_guess,
                            piece_names=score_api.get_unique_piece_names(), event_names=score_api.get_unique_event_names(),
                            composers=score_api.get_unique_composers_arrangers()[0], arrangers=score_api.get_unique_composers_arrangers()[1],
-                           current_year=datetime.datetime.now().year)
+                           current_year=datetime.datetime.now().year,drive_service=drive_service)
 
 @app.route('/update_order', methods=['POST'])
 def update_order():
@@ -397,13 +397,13 @@ def update_order():
         return render_template('preview.html', previews=sorted_filenames, piece_guess=piece, inst_guess=instrument,
                                piece_names=score_api.get_unique_piece_names(), event_names=score_api.get_unique_event_names(),
                                composers=score_api.get_unique_composers_arrangers()[0], arrangers=score_api.get_unique_composers_arrangers()[1],
-                               current_year=datetime.datetime.now().year)
+                               current_year=datetime.datetime.now().year,drive_service=drive_service)
     except ValueError:
         flash('順序には数値を入力してください。')
         return render_template('preview.html', previews=filenames, piece_guess=piece, inst_guess=instrument,
                                piece_names=score_api.get_unique_piece_names(), event_names=score_api.get_unique_event_names(),
                                composers=score_api.get_unique_composers_arrangers()[0], arrangers=score_api.get_unique_composers_arrangers()[1],
-                               current_year=datetime.datetime.now().year)
+                               current_year=datetime.datetime.now().year,drive_service=drive_service)
 
 @app.route('/api/get_profiles')
 def api_get_profiles():
@@ -470,9 +470,10 @@ def save_score():
 
             urls = []
             if target_folder_id:
+                token = session.get('google_token')
                 urls = firebase_db.upload_score_pages_to_google_drive(
                     saved_dir, saved_score_id, instrument,
-                    drive_service, target_folder_id
+                    token, target_folder_id
                 )
             # Firebase にも URL を記録
             if urls:
@@ -519,7 +520,7 @@ def piece_details():
 
 
 def download_from_drive_if_missing(score_id, instrument, details):
-    """Downloads missing files for a given score/instrument from Google Drive."""
+    """【セキュリティ＆安定性両立版】Driveから必要な分だけ安全に直列ダウンロードする"""
     target_dir = None
     urls = None
     for inst in details['instruments']:
@@ -533,45 +534,60 @@ def download_from_drive_if_missing(score_id, instrument, details):
     if urls is not None:
         target_dir = os.path.join("score_data", score_id, instrument)
         os.makedirs(target_dir, exist_ok=True)
+        
+        # すでにローカル（サーバー内）に保存されているファイル数をカウント
         image_files = sorted(glob.glob(os.path.join(target_dir, "*.png")))
 
+        # 枚数が一致しない場合（未ダウンロード、または不足がある場合）のみDriveから取得
         if len(image_files) != len(urls):
-            def download_single_file(i, url, token):
-                ds = get_drive_service(token)
+            token = session.get('google_token')
+            
+            # グローバル共有を避け、このユーザー要求のためだけの ds を毎回生成（SAトークンの衝突防止）
+            ds = firebase_db.initialize_google_drive(token)
+
+            print(f"🔒 サーバー内に安全にダウンロード中... (全 {len(urls)} ページ)")
+            
+            # 並列ではなく、1枚ずつ直列で確実にダウンロード
+            for i, url in enumerate(urls):
                 filename = f"{score_id}_{instrument}_page_{i + 1:03d}.png"
                 filepath = os.path.join(target_dir, filename)
+                
+                # すでにディスクにあるページはスキップし、足りないページだけを狙い撃ち
                 if not os.path.exists(filepath):
                     try:
                         parsed = urllib.parse.urlparse(url)
                         file_id = urllib.parse.parse_qs(parsed.query).get('id', [None])[0]
+                        
                         if file_id and ds:
                             request_obj = ds.files().get_media(fileId=file_id, supportsAllDrives=True)
-                            fh = io.BytesIO()
-                            downloader = MediaIoBaseDownload(fh, request_obj)
-                            done = False
-                            while done is False:
-                                status, done = downloader.next_chunk()
-                            with open(filepath, 'wb') as f:
-                                f.write(fh.getvalue())
-                            print(f"Download completed {url}")
-                        else:
-                            print(f"Could not extract file ID from URL or drive_service not available: {url}")
+                            
+                            # with 構文で1枚ごとにバイナリメモリを強制解放
+                            with io.BytesIO() as fh:
+                                downloader = MediaIoBaseDownload(fh, request_obj)
+                                done = False
+                                while done is False:
+                                    status, done = downloader.next_chunk()
+                                
+                                with open(filepath, 'wb') as f:
+                                    f.write(fh.getvalue())
+                                    
+                            print(f"  -> Cache completed: {filename}")
                     except Exception as e:
-                        print(f"Error downloading image from Drive API: {e}")
+                        print(f"  -> Error caching page {i+1}: {e}")
+            
+            # メモリを徹底的に掃除
+            import gc
+            gc.collect()
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                token = session.get('google_token')
-                futures = [executor.submit(download_single_file, i, url, token) for i, url in enumerate(urls)]
-                print(f"downloading {len(futures)}")
-                for future in concurrent.futures.as_completed(futures):
-                    try:
-                        future.result() 
-                    except Exception as e:
-                        flash(f"Thread execution error: {e}")
     elif not target_dir:
          target_dir = os.path.join("score_data", score_id, instrument)
 
     return target_dir, urls
+
+@app.route('/image/404')
+def get_image():
+    IMAGE_FOLDER = os.path.join(app.root_path, 'static')
+    return send_from_directory(IMAGE_FOLDER, '404.jpg')
 
 @app.route('/support/printer')
 def GetPrinterState():
@@ -586,13 +602,14 @@ def view_score():
     details = score_api.get_piece_details(score_id)
     if not details: return redirect(url_for('score_list'))
 
-    filenames,target_dir, urls = GetImagePathes(score_id, instrument, details)
+    filenames,target_dir, urlsTmp = GetImagePathes(score_id, instrument, details)
     
     printers = GetPrinterState()
     if len(printers.keys()) == 0:
         printers = None
 
-    # urls は、テンプレートでアップロードボタンの表示制御などに使えるよう渡す
+    urls = [url if url is not None else url_for("get_image") for url in urlsTmp]
+
     return render_template('view_score.html',
                            printer=printers,
                            details=details, 
@@ -680,7 +697,11 @@ def upload_to_drive():
 
     urls = []
     if target_folder_id:
-        urls = firebase_db.upload_score_pages_to_google_drive(target_dir, score_id, instrument, ds, target_folder_id)
+        token = session.get('google_token')
+        urls = firebase_db.upload_score_pages_to_google_drive(
+            target_dir, score_id, instrument,
+            token, target_folder_id
+        )
 
     if urls:
         db = score_api.load_db()
